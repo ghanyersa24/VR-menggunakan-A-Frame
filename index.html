@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tugas VR A-Frame | Beranda</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    h1 {
+      font-size: 2.5rem;
+      margin-bottom: 0.5rem;
+      text-align: center;
+      background: linear-gradient(90deg, #e94560, #f5a623);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .subtitle {
+      color: #a0a0c0;
+      margin-bottom: 3rem;
+      text-align: center;
+      max-width: 600px;
+    }
+
+    .card-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 2rem;
+      max-width: 900px;
+      width: 100%;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 2rem;
+      text-align: center;
+      transition: transform 0.3s, border-color 0.3s;
+      backdrop-filter: blur(10px);
+    }
+
+    .card:hover {
+      transform: translateY(-8px);
+      border-color: #e94560;
+    }
+
+    .card .icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+    }
+
+    .card h2 {
+      font-size: 1.4rem;
+      margin-bottom: 0.8rem;
+      color: #f5a623;
+    }
+
+    .card p {
+      color: #c0c0d0;
+      margin-bottom: 1.5rem;
+      line-height: 1.6;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 0.8rem 2rem;
+      background: linear-gradient(90deg, #e94560, #f5a623);
+      color: #fff;
+      text-decoration: none;
+      border-radius: 8px;
+      font-weight: 600;
+      transition: opacity 0.3s;
+    }
+
+    .btn:hover {
+      opacity: 0.85;
+    }
+
+    footer {
+      margin-top: 3rem;
+      color: #6c6c8c;
+      font-size: 0.9rem;
+      text-align: center;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Aplikasi Virtual Reality</h1>
+  <p class="subtitle">
+    Tugas Pengembangan VR menggunakan framework A-Frame.
+    Pilih salah satu aplikasi di bawah untuk memulai pengalaman VR.
+  </p>
+
+  <div class="card-container">
+    <div class="card">
+      <div class="icon">🎲</div>
+      <h2>Aplikasi 1 - VR Objek 3D</h2>
+      <p>
+        Eksplorasi galeri virtual dengan beragam objek 3D primitif,
+        model glTF, dan interaksi animasi.
+      </p>
+      <a href="vr-objek3d.html" class="btn">Mulai Pengalaman</a>
+    </div>
+
+    <div class="card">
+      <div class="icon">🌐</div>
+      <h2>Aplikasi 2 - VR 360°</h2>
+      <p>
+        Tur virtual panorama 360° dengan dua lokasi berbeda dan
+        navigasi antar-scene melalui hotspot interaktif.
+      </p>
+      <a href="vr-360.html" class="btn">Mulai Tur</a>
+    </div>
+  </div>
+
+  <footer>
+    <p>Dikembangkan dengan A-Frame 1.5.0 | Mata Kuliah Sistem Multimedia</p>
+    <p style="margin-top: 0.6rem; color: #f5a623;">
+      Dibuat oleh <b>Ghany Abdillah Ersa</b> - NIM <b>256150200111010</b>
+    </p>
+    <p style="color: #a0a0c0;">Mahasiswa Magister Sistem Informasi</p>
+    <p style="color: #a0a0c0;">Fakultas Ilmu Komputer</p>
+  </footer>
+</body>
+
+</html>

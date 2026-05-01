@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <title>Aplikasi 2 - VR Tour 360°</title>
+  <meta name="description" content="Tur virtual 360 derajat dengan navigasi multi-view" />
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <style>
+    .info-panel {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      font-size: 13px;
+      max-width: 280px;
+      z-index: 999;
+      border-left: 3px solid #4ecca3;
+    }
+    .info-panel h3 { margin: 0 0 8px 0; color: #4ecca3; font-size: 14px; }
+    .info-panel p { margin: 4px 0; line-height: 1.5; }
+    .scene-indicator {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 10px 24px;
+      border-radius: 30px;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      font-size: 14px;
+      z-index: 999;
+      border: 1px solid #4ecca3;
+    }
+    .back-btn {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      padding: 8px 14px;
+      background: rgba(233, 69, 96, 0.9);
+      color: #fff;
+      text-decoration: none;
+      border-radius: 6px;
+      font-family: Arial, sans-serif;
+      font-size: 13px;
+      z-index: 999;
+    }
+    /* Footer ditempatkan di kiri-bawah karena bagian tengah-bawah
+       sudah digunakan oleh scene-indicator */
+    .footer-credit {
+      position: fixed;
+      bottom: 12px;
+      left: 12px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      font-size: 12px;
+      z-index: 999;
+      border-left: 3px solid #4ecca3;
+      line-height: 1.5;
+      max-width: 260px;
+    }
+    .footer-credit b { color: #4ecca3; }
+  </style>
+
+  <!-- Custom Component: hotspot navigasi antar-scene -->
+  <script>
+    AFRAME.registerComponent('hotspot-navigator', {
+      schema: {
+        target: { type: 'string' },     // ID asset panorama target
+        label: { type: 'string' },      // Label scene tujuan
+        sceneName: { type: 'string' }   // Nama yg ditampilkan di indikator
+      },
+      init: function () {
+        const el = this.el;
+        const data = this.data;
+
+        // Animasi pulsasi saat hover
+        el.addEventListener('mouseenter', function () {
+          el.setAttribute('scale', '1.3 1.3 1.3');
+          el.setAttribute('material', 'opacity', 1);
+        });
+
+        el.addEventListener('mouseleave', function () {
+          el.setAttribute('scale', '1 1 1');
+          el.setAttribute('material', 'opacity', 0.8);
+        });
+
+        // Navigasi saat di-klik
+        el.addEventListener('click', function () {
+          const sky = document.querySelector('#skybox');
+          // Efek fade-out lalu ganti panorama
+          sky.setAttribute('animation__fadeout', {
+            property: 'material.opacity',
+            to: 0,
+            dur: 400
+          });
+
+          setTimeout(function () {
+            sky.setAttribute('src', '#' + data.target);
+            sky.setAttribute('animation__fadein', {
+              property: 'material.opacity',
+              from: 0, to: 1,
+              dur: 400
+            });
+            // Update indikator scene
+            document.querySelector('#sceneIndicator').innerText =
+              '📍 ' + data.sceneName;
+          }, 400);
+
+          // Tampilkan/sembunyikan hotspot sesuai scene aktif
+          updateHotspotVisibility(data.target);
+        });
+      }
+    });
+
+    // Fungsi untuk menampilkan hotspot yang relevan per scene
+    function updateHotspotVisibility(activeScene) {
+      const hotspots = document.querySelectorAll('[data-scene]');
+      hotspots.forEach(function (hs) {
+        if (hs.getAttribute('data-scene') === activeScene) {
+          hs.setAttribute('visible', true);
+        } else {
+          hs.setAttribute('visible', false);
+        }
+      });
+    }
+
+    // Inisialisasi visibilitas hotspot saat scene dimuat
+    window.addEventListener('load', function () {
+      setTimeout(function () { updateHotspotVisibility('pano1'); }, 500);
+    });
+  </script>
+</head>
+<body>
+  <!-- Panel Informasi UI -->
+  <div class="info-panel">
+    <h3>🌐 VR Tour 360°</h3>
+    <p><b>Lihat sekitar:</b> Drag mouse atau gerakkan kepala</p>
+    <p><b>Navigasi:</b> Arahkan kursor ke ikon hotspot, tunggu hingga ter-klik otomatis</p>
+    <p><b>Mode VR:</b> Klik ikon kacamata kanan-bawah</p>
+  </div>
+
+  <!-- Indikator scene saat ini -->
+  <div id="sceneIndicator" class="scene-indicator">📍 Scene 1: Lokasi Outdoor</div>
+  <a href="index.html" class="back-btn">← Kembali</a>
+
+  <!-- Footer Pembuat -->
+  <footer class="footer-credit">
+    Dibuat oleh <b>Ghany Abdillah Ersa</b><br>
+    NIM <b>256150200111010</b><br>
+    Mahasiswa Magister Sistem Informasi<br>
+    Fakultas Ilmu Komputer
+  </footer>
+
+  <a-scene>
+
+    <!-- Asset Management: panorama equirectangular -->
+    <a-assets timeout="10000">
+      <!-- Panorama 1: pemandangan outdoor (sechelt) -->
+      <img id="pano1" crossorigin="anonymous"
+           src="https://cdn.aframe.io/360-image-gallery-boilerplate/img/sechelt.jpg" />
+      <!-- Panorama 2: pemandangan indoor (cubes) -->
+      <img id="pano2" crossorigin="anonymous"
+           src="https://cdn.aframe.io/360-image-gallery-boilerplate/img/cubes.jpg" />
+    </a-assets>
+
+    <!-- Sky 360 (kontainer panorama) -->
+    <a-sky id="skybox" src="#pano1" rotation="0 -90 0"></a-sky>
+
+    <!-- ============================== -->
+    <!-- HOTSPOTS untuk Scene 1 (pano1) -->
+    <!-- ============================== -->
+    <a-entity data-scene="pano1" position="-3 1 -5">
+      <!-- Ring indikator -->
+      <a-ring color="#4ecca3"
+              radius-inner="0.3" radius-outer="0.5"
+              material="opacity: 0.8; transparent: true; side: double"
+              hotspot-navigator="target: pano2; sceneName: Scene 2: Lokasi Indoor"
+              animation="property: rotation; to: 0 0 360; loop: true; dur: 4000; easing: linear">
+      </a-ring>
+      <!-- Ikon panah -->
+      <a-text value="→"
+              position="0 0 0.01"
+              align="center"
+              color="#fff"
+              scale="2 2 2"></a-text>
+      <!-- Label hotspot -->
+      <a-text value="Pergi ke Scene 2"
+              position="0 -0.8 0"
+              align="center"
+              color="#4ecca3"
+              scale="0.8 0.8 0.8"></a-text>
+    </a-entity>
+
+    <!-- Hotspot info pada Scene 1 (sekedar deskripsi, tidak navigasi) -->
+    <a-entity data-scene="pano1" position="3 1 -4">
+      <a-ring color="#f5a623"
+              radius-inner="0.2" radius-outer="0.35"
+              material="opacity: 0.7; transparent: true; side: double">
+      </a-ring>
+      <a-text value="ℹ"
+              position="0 0 0.01"
+              align="center"
+              color="#fff"
+              scale="1.5 1.5 1.5"></a-text>
+      <a-text value="Lokasi: Sechelt, Kanada"
+              position="0 -0.6 0"
+              align="center"
+              color="#f5a623"
+              scale="0.6 0.6 0.6"></a-text>
+    </a-entity>
+
+    <!-- ============================== -->
+    <!-- HOTSPOTS untuk Scene 2 (pano2) -->
+    <!-- ============================== -->
+    <a-entity data-scene="pano2" position="3 1 -5" visible="false">
+      <a-ring color="#e94560"
+              radius-inner="0.3" radius-outer="0.5"
+              material="opacity: 0.8; transparent: true; side: double"
+              hotspot-navigator="target: pano1; sceneName: Scene 1: Lokasi Outdoor"
+              animation="property: rotation; to: 0 0 360; loop: true; dur: 4000; easing: linear">
+      </a-ring>
+      <a-text value="←"
+              position="0 0 0.01"
+              align="center"
+              color="#fff"
+              scale="2 2 2"></a-text>
+      <a-text value="Kembali ke Scene 1"
+              position="0 -0.8 0"
+              align="center"
+              color="#e94560"
+              scale="0.8 0.8 0.8"></a-text>
+    </a-entity>
+
+    <a-entity data-scene="pano2" position="-3 1 -4" visible="false">
+      <a-ring color="#f5a623"
+              radius-inner="0.2" radius-outer="0.35"
+              material="opacity: 0.7; transparent: true; side: double">
+      </a-ring>
+      <a-text value="ℹ"
+              position="0 0 0.01"
+              align="center"
+              color="#fff"
+              scale="1.5 1.5 1.5"></a-text>
+      <a-text value="Lokasi: Ruang Geometris"
+              position="0 -0.6 0"
+              align="center"
+              color="#f5a623"
+              scale="0.6 0.6 0.6"></a-text>
+    </a-entity>
+
+    <!-- ============================== -->
+    <!-- KAMERA dengan cursor reticle   -->
+    <!-- ============================== -->
+    <a-camera look-controls wasd-controls="enabled: false">
+      <!-- Cursor dengan animasi fuse: klik otomatis setelah 1.5 detik hover -->
+      <a-cursor color="#4ecca3"
+                fuse="true"
+                fuse-timeout="1500"
+                raycaster="objects: a-ring"
+                animation__click="property: scale; from: 0.1 0.1 0.1; to: 1 1 1; startEvents: click; dur: 150"
+                animation__fusing="property: scale; from: 1 1 1; to: 0.1 0.1 0.1; startEvents: fusing; dur: 1500">
+      </a-cursor>
+    </a-camera>
+
+  </a-scene>
+</body>
+</html>
