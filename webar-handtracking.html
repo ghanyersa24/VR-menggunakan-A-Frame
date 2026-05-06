@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>WebAR Hand Tracking | Clap & Grab</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      color: #fff;
+    }
+
+    #container {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      z-index: 1;
+    }
+
+    #three-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    #hud {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 3;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .badge {
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #f5f5f5;
+      pointer-events: auto;
+      min-width: 170px;
+    }
+
+    .badge b {
+      color: #f5a623;
+    }
+
+    .ok {
+      color: #4ade80;
+    }
+
+    .warn {
+      color: #f5a623;
+    }
+
+    .muted {
+      color: #a0a0c0;
+    }
+
+    .hot {
+      color: #e94560;
+    }
+
+    #back-btn {
+      pointer-events: auto;
+      background: linear-gradient(90deg, #e94560, #f5a623);
+      color: #fff;
+      text-decoration: none;
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 12px;
+    }
+
+    #hint {
+      position: absolute;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 3;
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-size: 13px;
+      max-width: 90%;
+      text-align: center;
+      backdrop-filter: blur(8px);
+      transition: opacity 0.3s;
+    }
+
+    #loader {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      background: rgba(10, 10, 20, 0.85);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      transition: opacity 0.5s;
+    }
+
+    #loader.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #f5a623;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    #loader p {
+      color: #c0c0d0;
+      font-size: 14px;
+      text-align: center;
+      max-width: 80%;
+    }
+
+    #error {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      background: rgba(20, 0, 0, 0.9);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+    }
+
+    #error.show {
+      display: flex;
+    }
+
+    #error h3 {
+      color: #e94560;
+      margin-bottom: 8px;
+    }
+
+    #error p {
+      color: #ddd;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    #flash {
+      position: absolute;
+      inset: 0;
+      z-index: 4;
+      background: #fff;
+      opacity: 0;
+      pointer-events: none;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="container">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="three-canvas"></canvas>
+    <div id="flash"></div>
+
+    <div id="hud">
+      <div class="badge">
+        <div>State: <b id="state-label">IDLE</b></div>
+        <div>Hands: <span id="hands-count" class="muted">0</span></div>
+        <div>L: <span id="gesture-l" class="muted">—</span></div>
+        <div>R: <span id="gesture-r" class="muted">—</span></div>
+        <div>FPS: <span id="fps" class="muted">0</span></div>
+      </div>
+      <a href="index.html" id="back-btn">← Kembali</a>
+    </div>
+
+    <div id="hint">👏 Tepuk tangan untuk memunculkan kubus</div>
+
+    <div id="loader">
+      <div class="spinner"></div>
+      <p id="loader-text">Memuat model hand tracking...<br>Izinkan akses kamera saat diminta.</p>
+    </div>
+
+    <div id="error">
+      <div class="box">
+        <h3>Tidak dapat memulai AR</h3>
+        <p id="error-msg">Pastikan browser memiliki izin kamera dan koneksi internet aktif.</p>
+      </div>
+    </div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js"
+    crossorigin="anonymous"></script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { Line2 } from 'three/addons/lines/Line2.js';
+    import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+    import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
+
+    const videoEl = document.getElementById('video');
+    const canvasEl = document.getElementById('three-canvas');
+    const stateLabel = document.getElementById('state-label');
+    const handsCountEl = document.getElementById('hands-count');
+    const gestureLEl = document.getElementById('gesture-l');
+    const gestureREl = document.getElementById('gesture-r');
+    const fpsEl = document.getElementById('fps');
+    const hintEl = document.getElementById('hint');
+    const flashEl = document.getElementById('flash');
+    const loaderEl = document.getElementById('loader');
+    const loaderText = document.getElementById('loader-text');
+    const errorEl = document.getElementById('error');
+    const errorMsg = document.getElementById('error-msg');
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 0, 2);
+
+    const renderer = new THREE.WebGLRenderer({
+      canvas: canvasEl,
+      alpha: true,
+      antialias: window.devicePixelRatio < 2,
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    renderer.setClearColor(0x000000, 0);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.4);
+    dirLight.position.set(1, 2, 3);
+    scene.add(dirLight);
+
+    const cubeGroup = new THREE.Group();
+    cubeGroup.visible = false;
+    scene.add(cubeGroup);
+
+    const CUBE_SIZE = 0.32;
+    const NEON_COLOR = 0x00ffe7;
+    const NEON_GRAB = 0x39ff14;
+    const NEON_HIGHLIGHT = 0xff2bd6;
+    const NEON_GLOW = 0x00ffff;
+
+    const fillMat = new THREE.MeshBasicMaterial({
+      color: NEON_COLOR,
+      transparent: true,
+      opacity: 0.18,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const wireMat = new LineMaterial({
+      color: NEON_COLOR,
+      linewidth: 6,
+      transparent: true,
+      opacity: 1.0,
+      depthTest: true,
+      worldUnits: false,
+    });
+    wireMat.resolution.set(window.innerWidth, window.innerHeight);
+    const haloMat = new LineMaterial({
+      color: NEON_GLOW,
+      linewidth: 14,
+      transparent: true,
+      opacity: 0.35,
+      depthTest: true,
+      blending: THREE.AdditiveBlending,
+      worldUnits: false,
+    });
+    haloMat.resolution.set(window.innerWidth, window.innerHeight);
+
+    const faceGeo = new THREE.PlaneGeometry(CUBE_SIZE, CUBE_SIZE);
+    const HALF = CUBE_SIZE / 2;
+    const faceEdges = new THREE.EdgesGeometry(faceGeo);
+    const faceLineSegGeo = new LineSegmentsGeometry().fromEdgesGeometry(faceEdges);
+
+    function buildFace() {
+      const g = new THREE.Group();
+      const fill = new THREE.Mesh(faceGeo, fillMat);
+      fill.position.y = HALF;
+      g.add(fill);
+      const wire = new Line2(faceLineSegGeo, wireMat);
+      wire.computeLineDistances();
+      wire.position.y = HALF;
+      g.add(wire);
+      const halo = new Line2(faceLineSegGeo, haloMat);
+      halo.computeLineDistances();
+      halo.position.y = HALF;
+      g.add(halo);
+      return g;
+    }
+
+    const bottomHinge = new THREE.Group();
+    bottomHinge.position.set(0, -HALF, 0);
+    bottomHinge.rotation.x = -Math.PI / 2;
+    cubeGroup.add(bottomHinge);
+    const bottomFace = new THREE.Group();
+    {
+      const fill = new THREE.Mesh(faceGeo, fillMat);
+      bottomFace.add(fill);
+      const wire = new Line2(faceLineSegGeo, wireMat); wire.computeLineDistances(); bottomFace.add(wire);
+      const halo = new Line2(faceLineSegGeo, haloMat); halo.computeLineDistances(); bottomFace.add(halo);
+    }
+    bottomHinge.add(bottomFace);
+
+    function buildSideHinge(edgeAxis, sign) {
+      const hinge = new THREE.Group();
+      const face = buildFace();
+      if (edgeAxis === 'x') {
+        hinge.position.set(0, -HALF, sign * HALF);
+      } else {
+        hinge.position.set(sign * HALF, -HALF, 0);
+        face.rotation.y = Math.PI / 2;
+      }
+      hinge.add(face);
+      return hinge;
+    }
+
+    const frontHinge = buildSideHinge('x', +1);
+    const backHinge = buildSideHinge('x', -1);
+    const rightHinge = buildSideHinge('z', +1);
+    const leftHinge = buildSideHinge('z', -1);
+    cubeGroup.add(frontHinge, backHinge, rightHinge, leftHinge);
+
+    const topHinge = new THREE.Group();
+    topHinge.position.set(0, CUBE_SIZE, 0);
+    backHinge.add(topHinge);
+    const topFace = buildFace();
+    topHinge.add(topFace);
+
+    function setUnfold(t) {
+      const a = THREE.MathUtils.clamp(t, 0, 1);
+      frontHinge.rotation.set(Math.PI / 2 * a, 0, 0);
+      backHinge.rotation.set(-Math.PI / 2 * a, 0, 0);
+      rightHinge.rotation.set(0, 0, -Math.PI / 2 * a);
+      leftHinge.rotation.set(0, 0, Math.PI / 2 * a);
+      topHinge.rotation.set(Math.PI / 2 * (1 - a), 0, 0);
+    }
+    setUnfold(0);
+
+    const glowMat = { opacity: 0, color: new THREE.Color(NEON_GLOW) };
+
+    function onResize() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h, false);
+      wireMat.resolution.set(w, h);
+      haloMat.resolution.set(w, h);
+    }
+    window.addEventListener('resize', onResize);
+    onResize();
+
+    function dist(a, b) {
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      const dz = (a.z || 0) - (b.z || 0);
+      return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    function palmCenter(lm) {
+      const idxs = [0, 5, 9, 13, 17];
+      let x = 0, y = 0, z = 0;
+      for (const i of idxs) {
+        x += lm[i].x; y += lm[i].y; z += lm[i].z || 0;
+      }
+      return { x: x / idxs.length, y: y / idxs.length, z: z / idxs.length };
+    }
+
+    function palmSize(lm) {
+      return dist(lm[0], lm[9]);
+    }
+
+    function isClosedFist(lm) {
+      // not thumbs up, tapi genggaman biasa: semua jari (kecuali ibu jari) terlipat dekat telapak
+      if (isThumbsUp(lm) || isPointing(lm)) return false;
+
+      const wrist = lm[0];
+      const tips = [8, 12, 16, 20];
+      const mcps = [5, 9, 13, 17];
+      let folded = 0;
+      for (let i = 0; i < tips.length; i++) {
+        const dTip = dist(lm[tips[i]], wrist);
+        const dMcp = dist(lm[mcps[i]], wrist);
+        if (dTip < dMcp * 1.05) folded++;
+      }
+      return folded >= 3;
+    }
+
+    function isOpenHand(lm) {
+      const palm = palmCenter(lm);
+      const tips = [8, 12, 16, 20];
+      const ps = palmSize(lm);
+      let extended = 0;
+      for (const t of tips) {
+        if (dist(lm[t], palm) > ps * 1.3) extended++;
+      }
+      return extended >= 3;
+    }
+
+    function isThumbsUp(lm) {
+      if (isPointing(lm)) return false; // jangan sampai salah deteksi pointing sebagai thumbs up
+      const wrist = lm[0];
+      const thumbTip = lm[4];
+      const thumbIP = lm[3]; // sendi sebelum ujung ibu jari
+
+      const tips = [8, 12, 16, 20]; // jari lain
+      const mcps = [5, 9, 13, 17];
+
+      // 1. Cek jari lain terlipat (seperti fist)
+      let folded = 0;
+      for (let i = 0; i < tips.length; i++) {
+        const dTip = dist(lm[tips[i]], wrist);
+        const dMcp = dist(lm[mcps[i]], wrist);
+        if (dTip < dMcp * 1.05) folded++;
+      }
+
+      // minimal 3 jari terlipat
+      const fingersFolded = folded >= 4;
+
+      // 2. Cek ibu jari terbuka (menjauh dari telapak)
+      const palm = palmCenter(lm);
+      const ps = palmSize(lm);
+      const thumbExtended = dist(thumbTip, palm) > ps * 1.2;
+
+      // 3. Cek arah ibu jari ke atas
+      // (ingat: koordinat y makin kecil = makin ke atas)
+      const thumbUp = thumbTip.y < thumbIP.y;
+
+      return fingersFolded && thumbExtended && thumbUp;
+    }
+
+    function isPointing(lm) {
+      const wrist = lm[0];
+
+      // index finger (telunjuk)
+      const indexTip = lm[8];
+      const indexMcp = lm[5];
+
+      // jari lain
+      const otherTips = [12, 16, 20];
+      const otherMcps = [9, 13, 17];
+
+      // 1. cek telunjuk terbuka
+      const dIndexTip = dist(indexTip, wrist);
+      const dIndexMcp = dist(indexMcp, wrist);
+      const indexExtended = dIndexTip > dIndexMcp * 1.2;
+
+      // 2. cek jari lain terlipat
+      let folded = 0;
+      for (let i = 0; i < otherTips.length; i++) {
+        const dTip = dist(lm[otherTips[i]], wrist);
+        const dMcp = dist(lm[otherMcps[i]], wrist);
+        if (dTip < dMcp * 1.05) folded++;
+      }
+
+      const othersFolded = folded >= 2;
+
+      return indexExtended && othersFolded;
+    }
+    function landmarkToWorld(p, depth = 1.5) {
+      const ndcX = -((p.x * 2) - 1);
+      const ndcY = -((p.y * 2) - 1);
+      const v = new THREE.Vector3(ndcX, ndcY, 0.5);
+      v.unproject(camera);
+      const dir = v.sub(camera.position).normalize();
+      return camera.position.clone().add(dir.multiplyScalar(depth));
+    }
+
+    const STATES = { IDLE: 'IDLE', SPAWNED: 'SPAWNED', GRABBED: 'GRABBED', UNFOLDED: 'UNFOLDED' };
+    const sm = {
+      state: STATES.IDLE,
+      pos: new THREE.Vector3(0, 0, 0),
+      smoothPos: new THREE.Vector3(0, 0, 0),
+      hasSmooth: false,
+      scale: 0.001,
+      targetScale: 0.001,
+      fade: 0,
+      targetFade: 0,
+      clapFramesClose: 0,
+      clapHoldUntil: 0,
+      clapDebounceUntil: 0,
+      lastClapPos: null,
+      grabHandIdx: -1,
+      grabReleaseDebounceUntil: 0,
+      unfold: 0,
+      targetUnfold: 0,
+      spreadOpenFrames: 0,
+      rotateLastIndex: null,
+      rotateActive: false,
+      pinchBaseDist: 0,
+      pinchBaseScale: 1,
+      pinchActive: false,
+      highlight: 0,
+    };
+
+    const CLAP_DIST_NORM = 0.12;
+    const CLAP_FRAMES = 3;
+    const CLAP_DEBOUNCE_MS = 1500;
+    const GRAB_DIST_WORLD = 0.45;
+    const RELEASE_DEBOUNCE_MS = 200;
+    const SPREAD_DIST_NORM = 0.55;
+    const SPREAD_FRAMES = 8;
+    const UNFOLD_SPEED = 2.5;
+    const ROTATE_TOUCH_DIST = 0.6;
+    const ROTATE_SENSITIVITY = 2.5;
+    const PINCH_SCALE_MIN = 0.3;
+    const PINCH_SCALE_MAX = 3.0;
+    const SMOOTHING = 0.35;
+    const FADE_IN_SPEED = 6.0;
+    const FADE_OUT_SPEED = 4.0;
+    const SCALE_SPEED = 8.0;
+    const BOUND = 1.6;
+
+    function setState(next, hint) {
+      if (sm.state !== next) {
+        sm.state = next;
+        stateLabel.textContent = next;
+      }
+      if (hint !== undefined) {
+        hintEl.textContent = hint;
+        hintEl.style.opacity = '1';
+      }
+    }
+
+    function flash() {
+      flashEl.style.transition = 'none';
+      flashEl.style.opacity = '0.6';
+      requestAnimationFrame(() => {
+        flashEl.style.transition = 'opacity 0.4s';
+        flashEl.style.opacity = '0';
+      });
+    }
+
+    // ---------- MediaPipe results ----------
+    let latestHands = []; // [{lm, label, palmCenter, palmWorld, isFist, isOpen}]
+
+    function onResults(results) {
+      const hands = [];
+      if (results.multiHandLandmarks && results.multiHandedness) {
+        for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+          const lm = results.multiHandLandmarks[i];
+          // multiHandedness label adalah dari sudut pandang gambar; karena kita mirror
+          // tampilan, "Left"/"Right" akan terbalik bagi user — tidak masalah untuk logika kita.
+          const label = results.multiHandedness[i].label;
+          const palm = palmCenter(lm);
+          hands.push({
+            lm,
+            label,
+            palm,
+            palmWorld: landmarkToWorld(palm),
+            indexTipWorld: landmarkToWorld(lm[8]),
+            isFist: isClosedFist(lm),
+            isOpen: isOpenHand(lm),
+            isThumbsUp: isThumbsUp(lm),
+            isPointing: isPointing(lm),
+          });
+        }
+      }
+      latestHands = hands;
+    }
+
+    // ---------- Update loop ----------
+    let lastFrame = performance.now();
+    let fpsAccum = 0, fpsCount = 0;
+
+    function updateHud() {
+      handsCountEl.textContent = String(latestHands.length);
+      handsCountEl.className = latestHands.length > 0 ? 'ok' : 'muted';
+
+      const fmt = (h) => {
+        if (!h) return ['—', 'muted'];
+        if (h.isFist) return ['Menggenggam ✊', 'hot'];
+        if (h.isOpen) return ['Terbuka ✋', 'ok'];
+        if (h.isThumbsUp) return ['Jempol ke Atas 👍', 'ok'];
+        if (h.isPointing) return ['Menunjuk 👉', 'ok'];
+        return ['Netral', 'warn'];
+      };
+      // Urutkan agar konsisten: tampilkan urut sesuai label
+      const left = latestHands.find(h => h.label === 'Left');
+      const right = latestHands.find(h => h.label === 'Right');
+      const [lt, lc] = fmt(left);
+      const [rt, rc] = fmt(right);
+      gestureLEl.textContent = lt;
+      gestureLEl.className = lc;
+      gestureREl.textContent = rt;
+      gestureREl.className = rc;
+    }
+
+    function tickStateMachine(now) {
+      const hand1 = latestHands[0];
+      const hand2 = latestHands[1];
+
+      // ----- Clap detection (butuh dua tangan, palm berdekatan) -----
+      let clapTriggered = false;
+      if (latestHands.length === 2) {
+        const d = dist(hand1.palm, hand2.palm);
+        if (d < CLAP_DIST_NORM) {
+          sm.clapFramesClose++;
+        } else {
+          sm.clapFramesClose = 0;
+        }
+        if (sm.clapFramesClose >= CLAP_FRAMES && now > sm.clapDebounceUntil) {
+          clapTriggered = true;
+          sm.clapDebounceUntil = now + CLAP_DEBOUNCE_MS;
+          sm.clapFramesClose = 0;
+          flash();
+        }
+      } else {
+        sm.clapFramesClose = 0;
+      }
+
+      // Clap berperilaku berbeda tergantung state:
+      //  - IDLE  : spawn kubus di tengah dua tangan
+      //  - lainnya (SPAWNED/GRABBED/UNFOLDED): despawn kubus → kembali ke IDLE
+      if (clapTriggered) {
+        if (sm.state === STATES.IDLE && latestHands.length === 2) {
+          const mid = {
+            x: (hand1.palm.x + hand2.palm.x) / 2,
+            y: (hand1.palm.y + hand2.palm.y) / 2,
+          };
+          const world = landmarkToWorld(mid);
+          sm.pos.copy(world);
+          sm.smoothPos.copy(world);
+          sm.hasSmooth = true;
+          sm.scale = 0.001;
+          sm.targetScale = 1.0;
+          sm.targetFade = 1.0;
+          sm.unfold = 0;
+          sm.targetUnfold = 0;
+          setState(STATES.SPAWNED, ' 👉 tunjuk untuk memindahkan kubus');
+        } else if (sm.state !== STATES.IDLE) {
+          // Despawn
+          sm.targetFade = 0;
+          sm.targetScale = 0.001;
+          sm.targetUnfold = 0;
+          sm.grabHandIdx = -1;
+          setState(STATES.IDLE, '👏 Tepuk tangan untuk memunculkan kubus');
+        }
+      }
+
+      // ----- SPAWNED: cek grab -----
+      if (sm.state === STATES.SPAWNED) {
+        sm.targetFade = 1.0;
+        sm.targetUnfold = 0;   // di SPAWNED, kubus tetap dalam bentuk kubus
+
+        let nearestDist = Infinity;
+        let nearestIdx = -1;
+        let fistNearIdx = -1;
+        for (let i = 0; i < latestHands.length; i++) {
+          const d = latestHands[i].palmWorld.distanceTo(sm.pos);
+          if (d < nearestDist) { nearestDist = d; nearestIdx = i; }
+          if (latestHands[i].isFist && d < GRAB_DIST_WORLD) {
+            fistNearIdx = i;
+          }
+        }
+        sm.highlight = (nearestIdx >= 0 && nearestDist < GRAB_DIST_WORLD) ? 1 : 0;
+
+        if (fistNearIdx >= 0) {
+          sm.grabHandIdx = fistNearIdx;
+          setState(STATES.GRABBED, '✋ Buka tangan untuk melepaskan • spread untuk membuka jaring');
+          sm.scale = 1.15;
+        }
+      }
+
+      // ----- GRABBED: ikuti tangan, atau spread untuk unfold -----
+      if (sm.state === STATES.GRABBED) {
+        // Cek trigger spread (dua tangan terbuka, jarak melebar) → UNFOLDED
+        if (latestHands.length === 2 && hand1.isFist && hand2.isFist) {
+          const palmDist = dist(hand1.palm, hand2.palm);
+          if (palmDist > SPREAD_DIST_NORM) {
+            sm.spreadOpenFrames++;
+            console.log('Spread open frames:', sm.spreadOpenFrames);
+          } else {
+            sm.spreadOpenFrames = 0;
+          }
+        } else {
+          sm.spreadOpenFrames = 0;
+        }
+        if (sm.spreadOpenFrames >= SPREAD_FRAMES) {
+          sm.spreadOpenFrames = 0;
+          sm.targetUnfold = 1;
+          sm.grabHandIdx = -1;
+          setState(STATES.UNFOLDED, '🪧 Jaring-jaring kubus aktif. 👏 Tepuk untuk menghilangkan.');
+        } else {
+          // Follow tangan menggenggam terdekat
+          let best = -1;
+          let bestD = Infinity;
+          for (let i = 0; i < latestHands.length; i++) {
+            if (!latestHands[i].isFist) continue;
+            const d = latestHands[i].palmWorld.distanceTo(sm.smoothPos);
+            if (d < bestD) { bestD = d; best = i; }
+          }
+          if (best >= 0 && bestD < GRAB_DIST_WORLD * 2.0) {
+            const target = latestHands[best].palmWorld;
+            target.x = Math.max(-BOUND, Math.min(BOUND, target.x));
+            target.y = Math.max(-BOUND, Math.min(BOUND, target.y));
+            sm.pos.copy(target);
+            sm.grabReleaseDebounceUntil = now + RELEASE_DEBOUNCE_MS;
+          } else if (now > sm.grabReleaseDebounceUntil) {
+            sm.grabHandIdx = -1;
+            setState(STATES.SPAWNED, '✊ Genggam dekat kubus untuk mengambilnya lagi');
+          }
+        }
+        sm.highlight = 1;
+      }
+
+      // ----- Pinch resize (aktif saat SPAWNED atau UNFOLDED): jarak antar dua telunjuk = skala
+      if (sm.state === STATES.SPAWNED || sm.state === STATES.UNFOLDED) {
+        const pointingHands = latestHands.filter(h => h.isPointing);
+        if (pointingHands.length >= 2) {
+          const a = pointingHands[0].indexTipWorld;
+          const b = pointingHands[1].indexTipWorld;
+          const d = a.distanceTo(b);
+          if (!sm.pinchActive) {
+            sm.pinchBaseDist = Math.max(d, 0.05);
+            sm.pinchBaseScale = sm.targetScale;
+            sm.pinchActive = true;
+          } else {
+            const ratio = d / sm.pinchBaseDist;
+            sm.targetScale = Math.max(PINCH_SCALE_MIN, Math.min(PINCH_SCALE_MAX, sm.pinchBaseScale * ratio));
+          }
+          sm.highlight = 1;
+        } else {
+          sm.pinchActive = false;
+        }
+      } else {
+        sm.pinchActive = false;
+      }
+
+      // ----- UNFOLDED: jaring-jaring aktif, tunggu clap untuk despawn -----
+      if (sm.state === STATES.UNFOLDED) {
+        sm.targetFade = 1.0;
+        sm.targetUnfold = 1;
+
+        // Rotasi via satu telunjuk menyentuh kubus (skip kalau sedang pinch resize)
+        let touchHand = null;
+        if (!sm.pinchActive) {
+          for (const h of latestHands) {
+            if (!h.isPointing) continue;
+            const d = h.indexTipWorld.distanceTo(sm.smoothPos);
+            if (d < ROTATE_TOUCH_DIST) { touchHand = h; break; }
+          }
+        }
+        if (touchHand) {
+          if (sm.rotateLastIndex && sm.rotateActive) {
+            const dx = touchHand.indexTipWorld.x - sm.rotateLastIndex.x;
+            const dy = touchHand.indexTipWorld.y - sm.rotateLastIndex.y;
+            cubeGroup.rotation.y += dx * ROTATE_SENSITIVITY;
+            cubeGroup.rotation.x += -dy * ROTATE_SENSITIVITY;
+          }
+          sm.rotateLastIndex = touchHand.indexTipWorld.clone();
+          sm.rotateActive = true;
+          sm.highlight = 1;
+        } else {
+          sm.rotateActive = false;
+          sm.rotateLastIndex = null;
+        }
+
+        if (latestHands.length === 2 && ((hand1.isPointing && hand2.isFist) || (hand1.isFist && hand2.isPointing))) {
+          const palmDist = dist(hand1.palm, hand2.palm);
+          if (palmDist > SPREAD_DIST_NORM) {
+            sm.spreadOpenFrames++;
+            console.log('Spread close frames:', sm.spreadOpenFrames);
+          } else {
+            sm.spreadOpenFrames = 0;
+          }
+        } else {
+          sm.spreadOpenFrames = 0;
+        }
+        if (sm.spreadOpenFrames >= SPREAD_FRAMES) {
+          sm.spreadOpenFrames = 0;
+          sm.targetUnfold = 0;
+          sm.grabHandIdx = -1;
+          setState(STATES.SPAWNED, '🪧 Jaring-jaring kubus aktif. 👏 Tepuk untuk menghilangkan.');
+        }
+      }
+
+      // ----- Idle hint default -----
+      if (sm.state === STATES.IDLE) {
+        sm.targetFade = 0;
+        sm.targetScale = 0.001;
+        sm.targetUnfold = 0;
+        hintEl.textContent = '👏 Tepuk tangan untuk memunculkan kubus';
+      }
+    }
+
+    function animate(now) {
+      requestAnimationFrame(animate);
+      const dt = Math.min(0.05, (now - lastFrame) / 1000);
+      lastFrame = now;
+
+      fpsAccum += 1 / Math.max(dt, 1e-4);
+      fpsCount++;
+      if (fpsCount >= 20) {
+        fpsEl.textContent = Math.round(fpsAccum / fpsCount);
+        fpsAccum = 0; fpsCount = 0;
+      }
+
+      updateHud();
+      tickStateMachine(now);
+
+      // Smoothing posisi
+      if (sm.hasSmooth) {
+        sm.smoothPos.lerp(sm.pos, SMOOTHING);
+      }
+
+      // Fade & scale lerp
+      sm.fade += (sm.targetFade - sm.fade) * Math.min(1, (sm.targetFade > sm.fade ? FADE_IN_SPEED : FADE_OUT_SPEED) * dt);
+      sm.scale += (sm.targetScale - sm.scale) * Math.min(1, SCALE_SPEED * dt);
+
+      // Unfold lerp + apply ke hierarchy face
+      sm.unfold += (sm.targetUnfold - sm.unfold) * Math.min(1, UNFOLD_SPEED * dt);
+      const easedUnfold = sm.unfold < 0.001 ? 0 : (sm.unfold > 0.999 ? 1 : sm.unfold);
+      setUnfold(easedUnfold);
+
+      const visible = sm.fade > 0.01;
+      cubeGroup.visible = visible;
+      if (visible) {
+        cubeGroup.position.copy(sm.smoothPos);
+        cubeGroup.scale.setScalar(sm.scale);
+        // Auto-rotate hanya saat masih bentuk kubus; freeze saat unfolded.
+        const spinFactor = 1 - sm.unfold;
+        cubeGroup.rotation.y += dt * 0.5 * spinFactor;
+
+        fillMat.opacity = 0.18 * sm.fade;
+        wireMat.opacity = 1.0 * sm.fade;
+        haloMat.opacity = 0.4 * sm.fade;
+
+        // glow naik saat ready-to-grab / grabbed / unfolded
+        const isInteracting = sm.state === STATES.GRABBED || sm.state === STATES.UNFOLDED;
+        const glowTarget = (isInteracting ? 0.4 : (sm.highlight ? 0.22 : 0.1)) * sm.fade;
+        glowMat.opacity += (glowTarget - glowMat.opacity) * Math.min(1, 6 * dt);
+
+        // warna neon berubah sesuai state
+        const targetColor = sm.state === STATES.UNFOLDED
+          ? 0x9d4dff                   // neon purple saat jaring-jaring
+          : (sm.state === STATES.GRABBED
+            ? NEON_GRAB
+            : (sm.highlight ? NEON_HIGHLIGHT : NEON_COLOR));
+        const targetCol = new THREE.Color(targetColor);
+        wireMat.color.lerp(targetCol, Math.min(1, 6 * dt));
+        fillMat.color.lerp(targetCol, Math.min(1, 6 * dt));
+        haloMat.color.lerp(targetCol, Math.min(1, 6 * dt));
+        glowMat.color.lerp(targetCol, Math.min(1, 6 * dt));
+
+        // pulse halus pada ketebalan halo
+        const pulse = 1 + Math.sin(now * 0.005) * 0.15;
+        haloMat.linewidth = 14 * pulse;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // ---------- MediaPipe boot ----------
+    async function startMediaPipe() {
+      if (typeof Hands === 'undefined' || typeof Camera === 'undefined') {
+        throw new Error('Library MediaPipe gagal dimuat. Periksa koneksi internet.');
+      }
+      const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`,
+      });
+      hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 0,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.5,
+      });
+      hands.onResults(onResults);
+
+      const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+      const cam = new Camera(videoEl, {
+        onFrame: async () => { await hands.send({ image: videoEl }); },
+        width: isMobile ? 480 : 640,
+        height: isMobile ? 360 : 480,
+        facingMode: 'user',
+      });
+      await cam.start();
+    }
+
+    (async function boot() {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('Browser tidak mendukung akses kamera (getUserMedia).');
+        }
+        loaderText.innerHTML = 'Meminta akses kamera...';
+        await startMediaPipe();
+        loaderText.innerHTML = 'Siap! 👏 Tepuk tangan untuk memulai.';
+        setTimeout(() => loaderEl.classList.add('hidden'), 500);
+        requestAnimationFrame(animate);
+      } catch (err) {
+        console.error(err);
+        errorMsg.textContent = err.message || 'Terjadi kesalahan tak terduga.';
+        errorEl.classList.add('show');
+        loaderEl.classList.add('hidden');
+      }
+    })();
+  </script>
+</body>
+
+</html>
