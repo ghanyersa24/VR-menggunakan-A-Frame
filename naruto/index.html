@@ -1,16 +1,28 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
+
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>naruto</title>
-  
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Naruto Hand FX | Jurus Tangan</title>
+
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 
   <style>
-    body { margin: 0; overflow: hidden; background-color: black; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      color: #fff;
+    }
+
     #v_src, #out {
       position: absolute; top: 0; left: 0;
       width: 100vw; height: 100vh;
@@ -31,6 +43,64 @@
     }
     #n { width: 1600px; }
     #s { width: 2400px; }
+
+    #hud {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 30;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .badge {
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #f5f5f5;
+      pointer-events: auto;
+      min-width: 170px;
+    }
+
+    .badge b { color: #f5a623; }
+    .ok { color: #4ade80; }
+    .warn { color: #f5a623; }
+    .muted { color: #a0a0c0; }
+
+    #back-btn {
+      pointer-events: auto;
+      background: linear-gradient(90deg, #e94560, #f5a623);
+      color: #fff;
+      text-decoration: none;
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 12px;
+    }
+
+    #hint {
+      position: absolute;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 30;
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-size: 13px;
+      max-width: 90%;
+      text-align: center;
+      backdrop-filter: blur(8px);
+    }
   </style>
 </head>
 <body>
@@ -41,6 +111,17 @@
 
   <video id="n" class="fx" src="assets/naruto.mp4" muted autoplay loop playsinline></video>
   <video id="s" class="fx" src="assets/sasuke.mp4" muted autoplay loop playsinline></video>
+
+  <div id="hud">
+    <div class="badge">
+      <div>Mode: <b>Naruto Hand FX</b></div>
+      <div>Kiri: <span class="ok">Naruto 🍥</span></div>
+      <div>Kanan: <span class="hot" style="color:#e94560;">Sasuke ⚡</span></div>
+    </div>
+    <a href="../index.html" id="back-btn">← Kembali</a>
+  </div>
+
+  <div id="hint">✋ Buka telapak tangan untuk memunculkan efek jurus</div>
 
   <script>
     const vElement = document.getElementById('v_src');
