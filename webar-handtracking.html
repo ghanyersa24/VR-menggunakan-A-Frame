@@ -327,7 +327,38 @@
     const faceEdges = new THREE.EdgesGeometry(faceGeo);
     const faceLineSegGeo = new LineSegmentsGeometry().fromEdgesGeometry(faceEdges);
 
-    function buildFace() {
+    function makeNumberSprite(n) {
+      const size = 256;
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, size, size);
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#00ffe7';
+      ctx.lineWidth = 8;
+      ctx.font = 'bold 180px "Segoe UI", Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#00ffe7';
+      ctx.shadowBlur = 24;
+      ctx.fillText(String(n), size / 2, size / 2 + 6);
+      ctx.shadowBlur = 0;
+      ctx.strokeText(String(n), size / 2, size / 2 + 6);
+      const tex = new THREE.CanvasTexture(c);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const labelSize = CUBE_SIZE * 0.7;
+      const labelGeo = new THREE.PlaneGeometry(labelSize, labelSize);
+      return new THREE.Mesh(labelGeo, mat);
+    }
+
+    function buildFace(number) {
       const g = new THREE.Group();
       const fill = new THREE.Mesh(faceGeo, fillMat);
       fill.position.y = HALF;
@@ -340,6 +371,16 @@
       halo.computeLineDistances();
       halo.position.y = HALF;
       g.add(halo);
+      if (number !== undefined) {
+        const label = makeNumberSprite(number);
+        label.position.set(0, HALF, 0.001);
+        g.add(label);
+        // Sisi belakang label (untuk side face yang di-rotate Y=90°, normal ada di -X juga)
+        // const labelBack = makeNumberSprite(number);
+        // labelBack.position.set(0, HALF, -0.001);
+        // labelBack.rotation.y = Math.PI;
+        // g.add(labelBack);
+      }
       return g;
     }
 
@@ -353,12 +394,19 @@
       bottomFace.add(fill);
       const wire = new Line2(faceLineSegGeo, wireMat); wire.computeLineDistances(); bottomFace.add(wire);
       const halo = new Line2(faceLineSegGeo, haloMat); halo.computeLineDistances(); bottomFace.add(halo);
+      const label = makeNumberSprite(6);
+      label.position.set(0, 0, 0.001);
+      bottomFace.add(label);
+      const labelBack = makeNumberSprite(6);
+      labelBack.position.set(0, 0, -0.001);
+      labelBack.rotation.y = Math.PI;
+      bottomFace.add(labelBack);
     }
     bottomHinge.add(bottomFace);
 
-    function buildSideHinge(edgeAxis, sign) {
+    function buildSideHinge(edgeAxis, sign, number) {
       const hinge = new THREE.Group();
-      const face = buildFace();
+      const face = buildFace(number);
       if (edgeAxis === 'x') {
         hinge.position.set(0, -HALF, sign * HALF);
       } else {
@@ -369,16 +417,16 @@
       return hinge;
     }
 
-    const frontHinge = buildSideHinge('x', +1);
-    const backHinge = buildSideHinge('x', -1);
-    const rightHinge = buildSideHinge('z', +1);
-    const leftHinge = buildSideHinge('z', -1);
+    const frontHinge = buildSideHinge('x', +1, 2);
+    const backHinge = buildSideHinge('x', -1, 5);
+    const rightHinge = buildSideHinge('z', +1, 3);
+    const leftHinge = buildSideHinge('z', -1, 4);
     cubeGroup.add(frontHinge, backHinge, rightHinge, leftHinge);
 
     const topHinge = new THREE.Group();
     topHinge.position.set(0, CUBE_SIZE, 0);
     backHinge.add(topHinge);
-    const topFace = buildFace();
+    const topFace = buildFace(1);
     topHinge.add(topFace);
 
     function setUnfold(t) {
@@ -536,6 +584,7 @@
       clapDebounceUntil: 0,
       lastClapPos: null,
       grabHandIdx: -1,
+      grabFromState: null,
       grabReleaseDebounceUntil: 0,
       unfold: 0,
       targetUnfold: 0,
@@ -682,14 +731,7 @@
           sm.targetFade = 1.0;
           sm.unfold = 0;
           sm.targetUnfold = 0;
-          setState(STATES.SPAWNED, ' 👉 tunjuk untuk memindahkan kubus');
-        } else if (sm.state !== STATES.IDLE) {
-          // Despawn
-          sm.targetFade = 0;
-          sm.targetScale = 0.001;
-          sm.targetUnfold = 0;
-          sm.grabHandIdx = -1;
-          setState(STATES.IDLE, '👏 Tepuk tangan untuk memunculkan kubus');
+          setState(STATES.SPAWNED, ' ✊ genggam dekat kubus untuk memindahkan');
         }
       }
 
@@ -712,19 +754,25 @@
 
         if (fistNearIdx >= 0) {
           sm.grabHandIdx = fistNearIdx;
-          setState(STATES.GRABBED, '✋ Buka tangan untuk melepaskan • spread untuk membuka jaring');
+          sm.grabFromState = STATES.SPAWNED;
+          setState(STATES.GRABBED, '✋ Buka tangan untuk melepaskan • genggam kedua tangan untuk membuka jaring');
           sm.scale = 1.15;
+        }
+
+        // check thumbs up untuk despawn (alternatif selain clap)
+        if (latestHands.some(h => h.isThumbsUp)) {
+          setState(STATES.IDLE, '👍 Jempol terdeteksi, kubus akan dihapus');
         }
       }
 
       // ----- GRABBED: ikuti tangan, atau spread untuk unfold -----
       if (sm.state === STATES.GRABBED) {
-        // Cek trigger spread (dua tangan terbuka, jarak melebar) → UNFOLDED
-        if (latestHands.length === 2 && hand1.isFist && hand2.isFist) {
+        // Cek trigger dua-fist spread → UNFOLDED (hanya jika sedang grab dari kubus folded)
+        const canUnfoldFromGrab = sm.grabFromState === STATES.SPAWNED;
+        if (canUnfoldFromGrab && latestHands.length === 2 && hand1.isFist && hand2.isFist) {
           const palmDist = dist(hand1.palm, hand2.palm);
           if (palmDist > SPREAD_DIST_NORM) {
             sm.spreadOpenFrames++;
-            console.log('Spread open frames:', sm.spreadOpenFrames);
           } else {
             sm.spreadOpenFrames = 0;
           }
@@ -753,7 +801,8 @@
             sm.grabReleaseDebounceUntil = now + RELEASE_DEBOUNCE_MS;
           } else if (now > sm.grabReleaseDebounceUntil) {
             sm.grabHandIdx = -1;
-            setState(STATES.SPAWNED, '✊ Genggam dekat kubus untuk mengambilnya lagi');
+            const back = sm.grabFromState === STATES.UNFOLDED ? STATES.UNFOLDED : STATES.SPAWNED;
+            setState(back, '✊ Genggam dekat kubus untuk mengambilnya lagi');
           }
         }
         sm.highlight = 1;
@@ -787,6 +836,23 @@
         sm.targetFade = 1.0;
         sm.targetUnfold = 1;
 
+        // Grab dari UNFOLDED: fist dekat kubus, dan tidak ada tangan lain pointing
+        // (agar tidak konflik dengan trigger fold-balik yang butuh fist+pointing)
+        const anyPointing = latestHands.some(h => h.isPointing);
+        if (!anyPointing) {
+          let fistNearIdxU = -1;
+          for (let i = 0; i < latestHands.length; i++) {
+            if (!latestHands[i].isFist) continue;
+            const d = latestHands[i].palmWorld.distanceTo(sm.smoothPos);
+            if (d < GRAB_DIST_WORLD) { fistNearIdxU = i; break; }
+          }
+          if (fistNearIdxU >= 0) {
+            sm.grabHandIdx = fistNearIdxU;
+            sm.grabFromState = STATES.UNFOLDED;
+            setState(STATES.GRABBED, '✋ Buka tangan untuk melepaskan');
+          }
+        }
+
         // Rotasi via satu telunjuk menyentuh kubus (skip kalau sedang pinch resize)
         let touchHand = null;
         if (!sm.pinchActive) {
@@ -815,7 +881,6 @@
           const palmDist = dist(hand1.palm, hand2.palm);
           if (palmDist > SPREAD_DIST_NORM) {
             sm.spreadOpenFrames++;
-            console.log('Spread close frames:', sm.spreadOpenFrames);
           } else {
             sm.spreadOpenFrames = 0;
           }
