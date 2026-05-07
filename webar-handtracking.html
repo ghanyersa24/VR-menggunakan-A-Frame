@@ -249,11 +249,41 @@
     crossorigin="anonymous"></script>
 
   <script type="module">
+    /* =====================================================================
+     * WebAR Hand Tracking — Clap & Grab
+     * ---------------------------------------------------------------------
+     * Alur tingkat tinggi:
+     *   1. MediaPipe Hands membaca frame dari <video> (kamera depan) dan
+     *      menghasilkan landmark 21 titik per tangan setiap frame.
+     *   2. onResults() menyaring landmark itu menjadi struktur `latestHands`
+     *      yang berisi gesture flags (fist/open/thumbsUp/pointing) +
+     *      koordinat dunia 3D dari telapak & ujung telunjuk.
+     *   3. Setiap frame requestAnimationFrame, animate() memanggil
+     *      tickStateMachine() untuk berpindah antar state berdasarkan
+     *      gesture, lalu meng-update Three.js scene (posisi, skala, fade,
+     *      derajat unfold jaring-jaring kubus).
+     *
+     * State machine: IDLE → SPAWNED → GRABBED → UNFOLDED
+     *   IDLE      : tidak ada kubus. Tepuk tangan (clap) → SPAWNED.
+     *   SPAWNED   : kubus muncul, auto-rotate. Genggam (fist) dekat kubus
+     *               → GRABBED. Clap lagi atau thumbs-up → IDLE.
+     *   GRABBED   : kubus mengikuti telapak. Lepas (tangan menjauh) →
+     *               kembali ke state asal. Dua fist + spread → UNFOLDED.
+     *   UNFOLDED  : kubus terbuka jadi jaring-jaring. Telunjuk menyentuh →
+     *               rotasi. Thumbs-up → cycle pola jaring berikutnya.
+     *               Fist+pointing spread → fold balik. Clap → IDLE.
+     *
+     * Pinch resize (dua telunjuk) aktif pada SPAWNED & UNFOLDED.
+     * ===================================================================== */
+
     import * as THREE from 'three';
     import { Line2 } from 'three/addons/lines/Line2.js';
     import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
     import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 
+    // ---------------------------------------------------------------------
+    // [1] DOM REFS — elemen yang dimanipulasi langsung (HUD, loader, dll)
+    // ---------------------------------------------------------------------
     const videoEl = document.getElementById('video');
     const canvasEl = document.getElementById('three-canvas');
     const stateLabel = document.getElementById('state-label');
@@ -269,6 +299,10 @@
     const errorEl = document.getElementById('error');
     const errorMsg = document.getElementById('error-msg');
 
+    // ---------------------------------------------------------------------
+    // [2] THREE.JS SETUP — scene, kamera perspektif, renderer transparan
+    // di atas <video>. alpha:true agar feed kamera tetap terlihat di belakang.
+    // ---------------------------------------------------------------------
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
     camera.position.set(0, 0, 2);
@@ -287,6 +321,12 @@
     dirLight.position.set(1, 2, 3);
     scene.add(dirLight);
 
+    // ---------------------------------------------------------------------
+    // [3] CUBE GROUP & MATERIALS
+    // cubeGroup = container untuk 6 face. Kita render setiap face sebagai
+    // plane terpisah agar bisa di-"unfold" (interpolasi antara posisi folded
+    // dan posisi pada bidang datar) dengan mudah.
+    // ---------------------------------------------------------------------
     const cubeGroup = new THREE.Group();
     cubeGroup.visible = false;
     scene.add(cubeGroup);
@@ -329,6 +369,8 @@
     const faceEdges = new THREE.EdgesGeometry(faceGeo);
     const faceLineSegGeo = new LineSegmentsGeometry().fromEdgesGeometry(faceEdges);
 
+    // Buat texture kanvas berisi angka (1..6) untuk label face.
+    // Hasilnya berupa Mesh plane kecil yang ditempel di tengah face.
     function makeNumberSprite(n) {
       const size = 256;
       const c = document.createElement('canvas');
@@ -410,6 +452,8 @@
       return g;
     }
 
+    // 6 face dengan label angka sesuai dadu (top=1, bottom=6, dst).
+    // Disimpan di map agar bisa di-akses berdasarkan nama face.
     const faceMeshes = {
       bottom: makeFace(6),
       top: makeFace(1),
@@ -531,6 +575,9 @@
     const _vFold = new THREE.Vector3();
     const _vUnfold = new THREE.Vector3();
 
+    // Interpolasi tiap face antara FOLDED (kubus utuh) dan NETS[currentNetIdx]
+    // (jaring-jaring datar). t=0 → kubus, t=1 → flat. Pakai SLERP untuk rotasi
+    // agar transisi tidak gimbal-flip dan LERP linear untuk posisi.
     function setUnfold(t) {
       const a = THREE.MathUtils.clamp(t, 0, 1);
       const net = NETS[currentNetIdx];
@@ -565,6 +612,17 @@
     window.addEventListener('resize', onResize);
     onResize();
 
+    // ---------------------------------------------------------------------
+    // [4] GESTURE DETECTION HELPERS
+    // Semua bekerja pada landmark MediaPipe (lm[0..20]) dalam koordinat
+    // ternormalisasi 0..1 (x,y) + z relatif. Indeks penting:
+    //   0  = wrist
+    //   4  = thumb tip,  3 = thumb IP
+    //   8  = index tip,  5 = index MCP
+    //   12 = middle tip, 9  = middle MCP
+    //   16 = ring tip,   13 = ring MCP
+    //   20 = pinky tip,  17 = pinky MCP
+    // ---------------------------------------------------------------------
     function dist(a, b) {
       const dx = a.x - b.x;
       const dy = a.y - b.y;
@@ -672,6 +730,9 @@
 
       return indexExtended && othersFolded;
     }
+    // Konversi titik landmark (NDC 0..1, dengan x mirror karena video
+    // di-flip horizontally via CSS) → posisi dunia 3D pada kedalaman tetap.
+    // Dipakai untuk menempatkan kubus & menghitung jarak fist→kubus.
     function landmarkToWorld(p, depth = 1.5) {
       const ndcX = -((p.x * 2) - 1);
       const ndcY = -((p.y * 2) - 1);
@@ -681,6 +742,14 @@
       return camera.position.clone().add(dir.multiplyScalar(depth));
     }
 
+    // ---------------------------------------------------------------------
+    // [5] STATE MACHINE
+    // `sm` = state model. Selain state utama, ia juga menampung counter
+    // gesture (clapFramesClose, spreadOpenFrames), debounce timestamp, dan
+    // target value yang akan di-lerp di animate() (targetScale, targetFade,
+    // targetUnfold). Pola counter+threshold dipakai supaya gesture harus
+    // konsisten beberapa frame baru memicu, mengurangi false positive.
+    // ---------------------------------------------------------------------
     const STATES = { IDLE: 'IDLE', SPAWNED: 'SPAWNED', GRABBED: 'GRABBED', UNFOLDED: 'UNFOLDED' };
     const sm = {
       state: STATES.IDLE,
@@ -713,6 +782,11 @@
       highlight: 0,
     };
 
+    // Konstanta tuning gesture. Satuan:
+    //   *_NORM  → koordinat MediaPipe ternormalisasi (0..1)
+    //   *_WORLD → satuan three.js setelah landmarkToWorld()
+    //   *_MS    → milidetik (debounce)
+    //   *_FRAMES→ jumlah frame berturut-turut sebelum gesture dianggap valid
     const CLAP_DIST_NORM = 0.12;
     const CLAP_FRAMES = 3;
     const CLAP_DEBOUNCE_MS = 1500;
@@ -754,7 +828,13 @@
       });
     }
 
-    // ---------- MediaPipe results ----------
+    // ---------------------------------------------------------------------
+    // [6] MEDIAPIPE RESULTS
+    // Callback yang dipanggil MediaPipe Hands setiap kali ia selesai
+    // memproses 1 frame. Kita normalkan output menjadi array `latestHands`
+    // berisi pre-computed flags & posisi dunia agar tickStateMachine()
+    // tidak perlu menghitung ulang setiap state-block.
+    // ---------------------------------------------------------------------
     let latestHands = []; // [{lm, label, palmCenter, palmWorld, isFist, isOpen}]
 
     function onResults(results) {
@@ -782,7 +862,16 @@
       latestHands = hands;
     }
 
-    // ---------- Update loop ----------
+    // ---------------------------------------------------------------------
+    // [7] UPDATE LOOP — dipanggil per-frame via requestAnimationFrame.
+    // Urutan kerja tiap frame:
+    //   updateHud()         → refresh badge gesture & FPS
+    //   tickStateMachine()  → transisi state berdasar latestHands
+    //   smoothPos.lerp      → pelan-pelan kejar sm.pos (anti-jitter)
+    //   fade/scale/unfold   → lerp menuju target
+    //   apply ke cubeGroup  → posisi/skala/rotasi/warna material
+    //   renderer.render     → gambar
+    // ---------------------------------------------------------------------
     let lastFrame = performance.now();
     let fpsAccum = 0, fpsCount = 0;
 
@@ -809,6 +898,10 @@
       gestureREl.className = rc;
     }
 
+    // Inti state machine. Setiap blok if(sm.state === ...) menangani satu
+    // state dan boleh mengubah `sm.state` lewat setState() saat trigger
+    // gesture-nya muncul. Blok dieksekusi top-down per frame, jadi transisi
+    // ke state baru baru efektif di frame berikutnya.
     function tickStateMachine(now) {
       const hand1 = latestHands[0];
       const hand2 = latestHands[1];
@@ -855,6 +948,9 @@
       }
 
       // ----- SPAWNED: cek grab -----
+      // Cari tangan dengan fist terdekat ke kubus. Jika dalam GRAB_DIST_WORLD
+      // → transisi ke GRABBED. nearestDist juga dipakai untuk highlight visual
+      // (kubus berkedip ungu saat tangan dekat = "ready to grab").
       if (sm.state === STATES.SPAWNED) {
         sm.targetFade = 1.0;
         sm.targetUnfold = 0;   // di SPAWNED, kubus tetap dalam bentuk kubus
@@ -885,6 +981,12 @@
       }
 
       // ----- GRABBED: ikuti tangan, atau spread untuk unfold -----
+      // Dua jalur:
+      //  (a) Trigger UNFOLD: butuh dua fist + jarak palm > SPREAD_DIST_NORM
+      //      konsisten selama SPREAD_FRAMES frame.
+      //  (b) Follow: kubus mengejar palm tangan menggenggam terdekat.
+      //      Kalau tidak ada fist dalam jangkauan & debounce lewat → release
+      //      kembali ke state asal (SPAWNED atau UNFOLDED).
       if (sm.state === STATES.GRABBED) {
         // Cek trigger dua-fist spread → UNFOLDED (hanya jika sedang grab dari kubus folded)
         const canUnfoldFromGrab = sm.grabFromState === STATES.SPAWNED;
@@ -951,6 +1053,11 @@
       }
 
       // ----- UNFOLDED: jaring-jaring aktif, tunggu clap untuk despawn -----
+      // Beberapa interaksi paralel di state ini:
+      //  • Re-grab fist (tanpa pointing) → GRABBED.
+      //  • Telunjuk dekat kubus → drag rotasi cubeGroup di sumbu X & Y.
+      //  • Thumbs-up (sekali per gesture, via thumbsLatched) → cycle pola NET.
+      //  • Fist + pointing dengan jarak palm besar → fold balik ke SPAWNED.
       if (sm.state === STATES.UNFOLDED) {
         sm.targetFade = 1.0;
         sm.targetUnfold = 1;
@@ -1037,6 +1144,8 @@
       }
     }
 
+    // Render loop utama. Semua animasi & feedback visual (warna neon,
+    // pulse halo, auto-rotate) dihitung di sini.
     function animate(now) {
       requestAnimationFrame(animate);
       const dt = Math.min(0.05, (now - lastFrame) / 1000);
@@ -1104,7 +1213,12 @@
       renderer.render(scene, camera);
     }
 
-    // ---------- MediaPipe boot ----------
+    // ---------------------------------------------------------------------
+    // [8] BOOT — inisialisasi MediaPipe Hands + utility Camera dari
+    // @mediapipe/camera_utils. Camera mengambil frame dari <video> dan
+    // memanggil hands.send() pada interval optimal sesuai device.
+    // boot() di-IIFE: cek dukungan getUserMedia → start → mulai animate().
+    // ---------------------------------------------------------------------
     async function startMediaPipe() {
       if (typeof Hands === 'undefined' || typeof Camera === 'undefined') {
         throw new Error('Library MediaPipe gagal dimuat. Periksa koneksi internet.');
