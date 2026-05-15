@@ -1,0 +1,1694 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>WebAR Jantung | Hand Control</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      color: #fff;
+    }
+
+    #container {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      z-index: 1;
+    }
+
+    #three-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    #hud {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 3;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .badge {
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #f5f5f5;
+      pointer-events: auto;
+      min-width: 170px;
+    }
+
+    .badge b {
+      color: #f5a623;
+    }
+
+    .ok {
+      color: #4ade80;
+    }
+
+    .warn {
+      color: #f5a623;
+    }
+
+    .muted {
+      color: #a0a0c0;
+    }
+
+    .hot {
+      color: #e94560;
+    }
+
+    #back-btn {
+      pointer-events: auto;
+      background: linear-gradient(90deg, #e94560, #f5a623);
+      color: #fff;
+      text-decoration: none;
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 12px;
+    }
+
+    #hint {
+      position: absolute;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 3;
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-size: 13px;
+      max-width: 90%;
+      text-align: center;
+      backdrop-filter: blur(8px);
+      transition: opacity 0.3s;
+    }
+
+    #toolbar {
+      position: absolute;
+      bottom: 70px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 3;
+      display: flex;
+      gap: 8px;
+      pointer-events: auto;
+    }
+
+    .tool-btn {
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+    }
+
+    .tool-btn:hover {
+      background: rgba(233, 69, 96, 0.3);
+      border-color: #e94560;
+    }
+
+    .tool-btn.off {
+      opacity: 0.5;
+      text-decoration: line-through;
+    }
+
+    .slider-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      padding: 4px 10px;
+      border-radius: 999px;
+    }
+
+    #volume-slider {
+      width: 80px;
+      accent-color: #e94560;
+      cursor: pointer;
+    }
+
+    #loader {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      background: rgba(10, 10, 20, 0.85);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      transition: opacity 0.5s;
+    }
+
+    #loader.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #e94560;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    #loader p {
+      color: #c0c0d0;
+      font-size: 14px;
+      text-align: center;
+      max-width: 80%;
+    }
+
+    #error {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      background: rgba(20, 0, 0, 0.9);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+    }
+
+    #error.show {
+      display: flex;
+    }
+
+    #error h3 {
+      color: #e94560;
+      margin-bottom: 8px;
+    }
+
+    #error p {
+      color: #ddd;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="container">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="three-canvas"></canvas>
+
+    <div id="hud">
+      <div class="badge">
+        <div>Mode: <b id="mode-label">IDLE</b></div>
+        <div>Hands: <span id="hands-count" class="muted">0</span></div>
+        <div>L: <span id="gesture-l" class="muted">—</span></div>
+        <div>R: <span id="gesture-r" class="muted">—</span></div>
+        <div>Scale: <span id="scale-label" class="muted">1.00x</span></div>
+        <div>FPS: <span id="fps" class="muted">0</span></div>
+      </div>
+      <a href="index.html" id="back-btn">← Kembali</a>
+    </div>
+
+    <div id="hint">👉 Tunjuk bagian • ✌️ rapat = rotasi • ✊ = pindah • 👉👉 = scale</div>
+
+    <div id="toolbar">
+      <button class="tool-btn" id="btn-beat-sound" title="Suara detak jantung">♪ Beat: ON</button>
+      <button class="tool-btn" id="btn-narration" title="Suara narasi bagian">🗣 Narasi: ON</button>
+      <div class="slider-wrap" title="Volume">
+        <span style="font-size:12px;">🔈</span>
+        <input type="range" id="volume-slider" min="0" max="100" value="70" />
+      </div>
+    </div>
+
+    <div id="loader">
+      <div class="spinner"></div>
+      <p id="loader-text">Memuat model & hand tracking...<br>Izinkan akses kamera saat diminta.</p>
+    </div>
+
+    <div id="error">
+      <div class="box">
+        <h3>Tidak dapat memulai AR</h3>
+        <p id="error-msg">Pastikan browser memiliki izin kamera dan koneksi internet aktif.</p>
+      </div>
+    </div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js"
+    crossorigin="anonymous"></script>
+
+  <script type="module">
+    /* =====================================================================
+     * WebAR Jantung — Hand Control + Pembelajaran Bagian Jantung
+     * ---------------------------------------------------------------------
+     * Skema kontrol:
+     *   • Jantung di-spawn otomatis di tengah layar saat halaman dimuat
+     *     (tanpa auto-rotate — rotasi sepenuhnya kontrol user).
+     *   • Fist (kepalan) dekat jantung → grab → ikuti gerakan tangan.
+     *   • Dua tangan menunjuk (telunjuk) → pinch resize berdasar jarak.
+     *   • Satu telunjuk dekat sebuah bagian → highlight + label 3D dengan
+     *     deskripsi pembelajaran muncul mengambang di samping bagian.
+     *   • Two-finger rapat (telunjuk + jari tengah dirapatkan, ring & pinky
+     *     terlipat) → drag tangan = rotasi X/Y jantung. Eksklusif dari
+     *     pointing biasa karena cek "jari tengah extended" sebagai pembeda.
+     *   • Toolbar bawah hanya berisi kontrol audio: Beat / Narasi + slider
+     *     volume.
+     *
+     * Audio:
+     *   • Heartbeat lub-dub disintesis live via Web Audio API (oscillator
+     *     + noise burst + envelope), looping ~70 BPM. Toggle via tombol Beat.
+     *   • Narasi bagian otomatis diucapkan via SpeechSynthesis (id-ID) saat
+     *     selectedPart berubah, dengan delay 1 detik untuk antisipasi salah
+     *     tunjuk. Toggle independen via tombol Narasi.
+     *
+     * Bagian yang bisa dipilih (8): ventrikel kiri/kanan, atrium kiri/kanan,
+     * aorta, arteri pulmonalis, vena cava, vena pulmonalis. Definisi
+     * deskripsi ada di konstanta PARTS.
+     *
+     * Model jantung: GLB di assets/heart.glb jika ada (mesh-nya harus
+     * dinamai sesuai partId untuk picker), kalau tidak jatuh ke procedural
+     * heart (sudah di-tag userData.partId).
+     * ===================================================================== */
+
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    // ---------------------------------------------------------------------
+    // [1] DOM REFS
+    // ---------------------------------------------------------------------
+    const videoEl = document.getElementById('video');
+    const canvasEl = document.getElementById('three-canvas');
+    const modeLabel = document.getElementById('mode-label');
+    const handsCountEl = document.getElementById('hands-count');
+    const gestureLEl = document.getElementById('gesture-l');
+    const gestureREl = document.getElementById('gesture-r');
+    const scaleLabel = document.getElementById('scale-label');
+    const fpsEl = document.getElementById('fps');
+    const hintEl = document.getElementById('hint');
+    const loaderEl = document.getElementById('loader');
+    const loaderText = document.getElementById('loader-text');
+    const errorEl = document.getElementById('error');
+    const errorMsg = document.getElementById('error-msg');
+    const btnBeatSound = document.getElementById('btn-beat-sound');
+    const btnNarration = document.getElementById('btn-narration');
+    const volumeSlider = document.getElementById('volume-slider');
+
+    // ---------------------------------------------------------------------
+    // [2] THREE.JS SETUP
+    // ---------------------------------------------------------------------
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 0, 2);
+
+    const renderer = new THREE.WebGLRenderer({
+      canvas: canvasEl,
+      alpha: true,
+      antialias: window.devicePixelRatio < 2,
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    renderer.setClearColor(0x000000, 0);
+
+    scene.add(new THREE.AmbientLight(0xffe5e5, 0.9));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    keyLight.position.set(2, 3, 4);
+    scene.add(keyLight);
+    const rimLight = new THREE.DirectionalLight(0xff6b9d, 0.5);
+    rimLight.position.set(-2, 1, -2);
+    scene.add(rimLight);
+
+    // ---------------------------------------------------------------------
+    // [2b] AUDIO SYSTEM
+    // - Heartbeat: synthesis lub-dub via Web Audio API (oscillator low freq
+    //   + noise burst + envelope). Looping 1Hz/menyesuaikan beat visual.
+    // - Narasi: SpeechSynthesis API (id-ID) untuk membaca deskripsi part.
+    // Browser hanya mengizinkan AudioContext mulai dari user gesture, jadi
+    // semua audio di-resume() di tombol Suara atau klik pertama di canvas.
+    // ---------------------------------------------------------------------
+    const audio = {
+      ctx: null,
+      masterGain: null,
+      beatGain: null,
+      narrGain: null,
+      beatTimer: null,
+      enabled: true,
+      beatEnabled: true,
+      narrEnabled: true,
+      volume: 0.7,
+      voice: null,
+      currentUtterance: null,
+      lastSpokenPart: null,
+      started: false,
+      // Delay 1 detik sebelum narasi mulai dibaca. Mencegah TTS bertabrakan
+      // saat user "menyapu" telunjuk lewat banyak bagian (false-pick cepat).
+      narrationDelayMs: 1000,
+      pendingNarrationTimer: null,
+      pendingNarrationPart: null,
+    };
+
+    function ensureAudioCtx() {
+      if (audio.ctx) {
+        if (audio.ctx.state === 'suspended') audio.ctx.resume();
+        return audio.ctx;
+      }
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return null;
+      const ctx = new Ctx();
+      audio.ctx = ctx;
+      audio.masterGain = ctx.createGain();
+      audio.masterGain.gain.value = audio.volume;
+      audio.masterGain.connect(ctx.destination);
+      // bus terpisah biar bisa mute detak tanpa pengaruh ke narasi (TTS jalan
+      // di luar AudioContext, tapi tetap kita pakai pola yang sama untuk
+      // konsistensi UI/state).
+      audio.beatGain = ctx.createGain();
+      audio.beatGain.gain.value = audio.beatEnabled ? 1.0 : 0.0;
+      audio.beatGain.connect(audio.masterGain);
+      return ctx;
+    }
+
+    // Sintesis satu "lub" atau "dub" — burst frekuensi rendah dengan envelope
+    // cepat naik & turun. Lub (S1) lebih panjang dan rendah, dub (S2) lebih
+    // pendek dan sedikit lebih tinggi. Ditambah noise band untuk tekstur.
+    function synthThump(when, freq, dur, gain) {
+      const ctx = audio.ctx;
+      if (!ctx) return;
+      // Oscillator utama
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq * 1.2, when);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.6, when + dur);
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, when);
+      g.gain.linearRampToValueAtTime(gain, when + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+      osc.connect(g).connect(audio.beatGain);
+      osc.start(when);
+      osc.stop(when + dur + 0.02);
+
+      // Tekstur noise pendek (mimics turbulensi katup)
+      const bufferSize = Math.floor(ctx.sampleRate * 0.04);
+      const noiseBuf = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = noiseBuf.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+      }
+      const noise = ctx.createBufferSource();
+      noise.buffer = noiseBuf;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'lowpass';
+      bp.frequency.value = 220;
+      const ng = ctx.createGain();
+      ng.gain.setValueAtTime(0, when);
+      ng.gain.linearRampToValueAtTime(gain * 0.5, when + 0.006);
+      ng.gain.exponentialRampToValueAtTime(0.0001, when + dur * 0.7);
+      noise.connect(bp).connect(ng).connect(audio.beatGain);
+      noise.start(when);
+      noise.stop(when + dur + 0.02);
+    }
+
+    // Satu cycle lub-dub. BPM standar istirahat ~70 → ~0.86s per beat.
+    function playLubDub(bpm = 70) {
+      const ctx = audio.ctx;
+      if (!ctx) return;
+      const now = ctx.currentTime;
+      // S1 ("lub") — penutupan katup mitral/trikuspid, frekuensi lebih rendah
+      synthThump(now, 55, 0.22, 0.45);
+      // S2 ("dub") — penutupan katup aorta/pulmoner, sekitar 0.30s setelah S1
+      synthThump(now + 0.30, 80, 0.16, 0.35);
+    }
+
+    function startBeatLoop() {
+      stopBeatLoop();
+      if (!audio.ctx) return;
+      const interval = 60 / 70 * 1000; // 70 BPM
+      // Putar pertama langsung, lalu setiap interval.
+      playLubDub();
+      audio.beatTimer = setInterval(() => {
+        if (audio.enabled && audio.beatEnabled && state.animateBeat) {
+          playLubDub();
+        }
+      }, interval);
+    }
+
+    function stopBeatLoop() {
+      if (audio.beatTimer) {
+        clearInterval(audio.beatTimer);
+        audio.beatTimer = null;
+      }
+    }
+
+    // ----- Narasi (TTS) -----
+    function pickIndonesianVoice() {
+      if (!window.speechSynthesis) return null;
+      const voices = speechSynthesis.getVoices();
+      // Prioritas: voice id-ID, lalu yang nama mengandung "Indonesia"
+      let v = voices.find(x => /^id(-|_)?ID/i.test(x.lang));
+      if (!v) v = voices.find(x => /indones/i.test(x.name));
+      // Fallback: voice apa saja
+      return v || voices[0] || null;
+    }
+
+    // Jadwalkan narasi dengan delay (default 1 detik). Kalau partId berubah
+    // sebelum timer habis, timer di-cancel dan dijadwal ulang — jadi user
+    // bisa "ganti pilihan" tanpa narasi salah ikut diucapkan.
+    function speakPart(partId) {
+      if (!audio.enabled || !audio.narrEnabled) return;
+      if (!window.speechSynthesis) return;
+      const part = PARTS[partId];
+      if (!part) return;
+
+      // Batalkan pending narasi sebelumnya (jika ada) & hentikan utterance
+      // yang sedang berjalan supaya tidak menumpuk.
+      if (audio.pendingNarrationTimer) {
+        clearTimeout(audio.pendingNarrationTimer);
+        audio.pendingNarrationTimer = null;
+      }
+      speechSynthesis.cancel();
+      audio.pendingNarrationPart = partId;
+
+      audio.pendingNarrationTimer = setTimeout(() => {
+        audio.pendingNarrationTimer = null;
+        // Re-check kondisi saat timer firing — bisa saja user mute, atau
+        // pindah part lagi di antara delay (yang berarti timer ini sudah
+        // tidak relevan tapi belum sempat di-clearTimeout).
+        if (!audio.enabled || !audio.narrEnabled) return;
+        if (audio.pendingNarrationPart !== partId) return;
+        const p = PARTS[partId];
+        if (!p) return;
+
+        const text = `${p.title}. ${p.desc}`;
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = 'id-ID';
+        u.rate = 1.0;
+        u.pitch = 1.0;
+        u.volume = audio.volume;
+        if (!audio.voice) audio.voice = pickIndonesianVoice();
+        if (audio.voice) u.voice = audio.voice;
+        audio.currentUtterance = u;
+        speechSynthesis.speak(u);
+      }, audio.narrationDelayMs);
+    }
+
+    function stopNarration() {
+      if (audio.pendingNarrationTimer) {
+        clearTimeout(audio.pendingNarrationTimer);
+        audio.pendingNarrationTimer = null;
+      }
+      audio.pendingNarrationPart = null;
+      if (window.speechSynthesis) speechSynthesis.cancel();
+      audio.currentUtterance = null;
+      audio.lastSpokenPart = null;
+    }
+
+    // Browser butuh user gesture pertama untuk membolehkan audio.
+    function userKickAudio() {
+      if (audio.started) return;
+      ensureAudioCtx();
+      if (audio.ctx && audio.ctx.state === 'suspended') audio.ctx.resume();
+      // Load voice list (kadang baru tersedia setelah event 'voiceschanged')
+      if (window.speechSynthesis && !audio.voice) {
+        audio.voice = pickIndonesianVoice();
+        speechSynthesis.onvoiceschanged = () => {
+          audio.voice = pickIndonesianVoice();
+        };
+      }
+      startBeatLoop();
+      audio.started = true;
+    }
+
+    function applyVolume() {
+      if (audio.masterGain) audio.masterGain.gain.value = audio.enabled ? audio.volume : 0;
+      // TTS volume berlaku per-utterance saat dibuat; tidak bisa di-set live.
+    }
+
+    function applyBeatEnabled() {
+      if (audio.beatGain) audio.beatGain.gain.value = audio.beatEnabled ? 1.0 : 0.0;
+    }
+
+    // ---------------------------------------------------------------------
+    // [3] HEART MODEL
+    // Group root agar transform (posisi/skala/rotasi) lewat satu titik.
+    // Coba load GLB dulu; jika gagal → procedural heart dari primitif.
+    // ---------------------------------------------------------------------
+    const heartGroup = new THREE.Group();
+    scene.add(heartGroup);
+
+    // ---------------------------------------------------------------------
+    // [3a] PARTS METADATA — bagian yang bisa dipilih untuk pembelajaran.
+    // Tiap mesh yang berhubungan dengan part ini akan diberi userData.partId
+    // sehingga raycaster/proximity-picker bisa mengidentifikasi targetnya.
+    // ---------------------------------------------------------------------
+    const PARTS = {
+      leftVentricle: {
+        title: 'Ventrikel Kiri',
+        desc: 'Bilik kiri jantung — pemompa utama yang mendorong darah kaya oksigen ke seluruh tubuh melalui aorta. Memiliki dinding otot paling tebal.',
+        color: 0xffeb3b,
+      },
+      rightVentricle: {
+        title: 'Ventrikel Kanan',
+        desc: 'Bilik kanan jantung — memompa darah miskin oksigen ke paru-paru melalui arteri pulmonalis untuk dioksigenasi.',
+        color: 0xffeb3b,
+      },
+      leftAtrium: {
+        title: 'Atrium Kiri',
+        desc: 'Serambi kiri — menerima darah kaya oksigen dari paru-paru melalui vena pulmonalis, lalu menyalurkannya ke ventrikel kiri.',
+        color: 0x4ade80,
+      },
+      rightAtrium: {
+        title: 'Atrium Kanan',
+        desc: 'Serambi kanan — menerima darah miskin oksigen dari seluruh tubuh melalui vena cava, lalu menyalurkannya ke ventrikel kanan.',
+        color: 0x4ade80,
+      },
+      aorta: {
+        title: 'Aorta',
+        desc: 'Pembuluh arteri terbesar dalam tubuh. Membawa darah kaya oksigen dari ventrikel kiri ke seluruh organ tubuh.',
+        color: 0xff6b9d,
+      },
+      pulmonaryArtery: {
+        title: 'Arteri Pulmonalis',
+        desc: 'Pembuluh arteri yang membawa darah miskin oksigen dari ventrikel kanan menuju paru-paru. Satu-satunya arteri yang membawa darah miskin oksigen.',
+        color: 0xff6b9d,
+      },
+      venaCava: {
+        title: 'Vena Cava',
+        desc: 'Vena terbesar dalam tubuh. Vena cava superior membawa darah dari kepala/lengan, vena cava inferior dari tubuh bagian bawah, keduanya menuju atrium kanan.',
+        color: 0x60a5fa,
+      },
+      pulmonaryVein: {
+        title: 'Vena Pulmonalis',
+        desc: 'Pembuluh vena yang membawa darah kaya oksigen dari paru-paru kembali ke atrium kiri. Satu-satunya vena yang membawa darah kaya oksigen.',
+        color: 0x60a5fa,
+      },
+    };
+
+    // Tag mesh dengan partId & simpan warna emissive asal untuk highlight restore.
+    function tagPart(mesh, partId) {
+      mesh.userData.partId = partId;
+      // simpan kondisi awal untuk efek highlight (emissive boost)
+      if (mesh.material && mesh.material.emissive) {
+        mesh.userData._origEmissive = mesh.material.emissive.getHex();
+        mesh.userData._origEmissiveIntensity = mesh.material.emissiveIntensity ?? 1;
+      }
+    }
+
+    // Procedural heart: gabungan beberapa shape merah/pink/biru menyerupai
+    // jantung anatomis dasar (ventrikel kiri/kanan, atrium, aorta, vena cava,
+    // arteri pulmonalis). Bukan akurasi medis — visualisasi edukatif.
+    // Setiap bagian di-tag userData.partId agar bisa di-pick.
+    function buildProceduralHeart() {
+      const g = new THREE.Group();
+
+      // Material per-part agar highlight (emissive boost) tidak mempengaruhi
+      // bagian lain yang share material yang sama.
+      const makeMuscle = (dark = false) => new THREE.MeshStandardMaterial({
+        color: dark ? 0x7a1418 : 0xa31e23,
+        roughness: dark ? 0.6 : 0.55,
+        metalness: 0.05,
+        emissive: 0x000000,
+        emissiveIntensity: 1,
+      });
+      const makeArtery = () => new THREE.MeshStandardMaterial({
+        color: 0xc94545,
+        roughness: 0.5,
+        metalness: 0.1,
+        emissive: 0x000000,
+      });
+      const makeVein = () => new THREE.MeshStandardMaterial({
+        color: 0x3a5fb8,
+        roughness: 0.55,
+        metalness: 0.1,
+        emissive: 0x000000,
+      });
+      const makePulmonary = () => new THREE.MeshStandardMaterial({
+        color: 0x6b8acc,
+        roughness: 0.55,
+        metalness: 0.1,
+        emissive: 0x000000,
+      });
+      const makePulmVein = () => new THREE.MeshStandardMaterial({
+        color: 0xa83a6a,
+        roughness: 0.55,
+        metalness: 0.1,
+        emissive: 0x000000,
+      });
+
+      // Ventrikel kiri (bulb besar)
+      const leftVent = new THREE.Mesh(new THREE.SphereGeometry(0.35, 32, 24), makeMuscle(false));
+      leftVent.scale.set(1.0, 1.3, 0.95);
+      leftVent.position.set(-0.05, -0.15, 0);
+      tagPart(leftVent, 'leftVentricle');
+      g.add(leftVent);
+
+      // Ventrikel kanan (bulb lebih kecil, sedikit ke depan)
+      const rightVent = new THREE.Mesh(new THREE.SphereGeometry(0.28, 32, 24), makeMuscle(true));
+      rightVent.scale.set(0.9, 1.15, 0.95);
+      rightVent.position.set(0.22, -0.1, 0.05);
+      tagPart(rightVent, 'rightVentricle');
+      g.add(rightVent);
+
+      // Atrium kiri (atas kiri)
+      const leftAtr = new THREE.Mesh(new THREE.SphereGeometry(0.18, 24, 18), makeMuscle(false));
+      leftAtr.scale.set(1.0, 0.9, 1.0);
+      leftAtr.position.set(-0.1, 0.22, -0.05);
+      tagPart(leftAtr, 'leftAtrium');
+      g.add(leftAtr);
+
+      // Atrium kanan
+      const rightAtr = new THREE.Mesh(new THREE.SphereGeometry(0.16, 24, 18), makeMuscle(true));
+      rightAtr.scale.set(1.0, 0.9, 1.0);
+      rightAtr.position.set(0.2, 0.22, 0.0);
+      tagPart(rightAtr, 'rightAtrium');
+      g.add(rightAtr);
+
+      // Aorta (lengkung besar di atas)
+      const aortaCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(-0.05, 0.25, 0.0),
+        new THREE.Vector3(-0.05, 0.55, 0.0),
+        new THREE.Vector3(0.05, 0.7, -0.1),
+        new THREE.Vector3(0.2, 0.65, -0.2),
+        new THREE.Vector3(0.25, 0.45, -0.25),
+      ]);
+      const aorta = new THREE.Mesh(
+        new THREE.TubeGeometry(aortaCurve, 32, 0.06, 12, false),
+        makeArtery()
+      );
+      tagPart(aorta, 'aorta');
+      g.add(aorta);
+
+      // Arteri pulmonalis (di samping aorta)
+      const pulmCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0.18, 0.25, 0.05),
+        new THREE.Vector3(0.18, 0.5, 0.05),
+        new THREE.Vector3(0.08, 0.62, 0.0),
+      ]);
+      const pulm = new THREE.Mesh(
+        new THREE.TubeGeometry(pulmCurve, 24, 0.05, 12, false),
+        makePulmonary()
+      );
+      tagPart(pulm, 'pulmonaryArtery');
+      g.add(pulm);
+
+      // Vena cava superior (vena biru atas)
+      const svcCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0.3, 0.3, 0.0),
+        new THREE.Vector3(0.32, 0.55, 0.0),
+        new THREE.Vector3(0.3, 0.7, 0.05),
+      ]);
+      const svc = new THREE.Mesh(
+        new THREE.TubeGeometry(svcCurve, 20, 0.045, 12, false),
+        makeVein()
+      );
+      tagPart(svc, 'venaCava');
+      g.add(svc);
+
+      // Vena cava inferior (vena biru bawah)
+      const ivc = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.2, 16), makeVein());
+      ivc.position.set(0.28, -0.4, 0.0);
+      tagPart(ivc, 'venaCava');
+      g.add(ivc);
+
+      // Vena pulmonalis (4 cabang dari belakang menuju atrium kiri)
+      // Disederhanakan jadi 2 tube di kiri-belakang atrium kiri.
+      const pv1Curve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(-0.25, 0.28, -0.15),
+        new THREE.Vector3(-0.18, 0.25, -0.1),
+        new THREE.Vector3(-0.1, 0.22, -0.05),
+      ]);
+      const pv1 = new THREE.Mesh(new THREE.TubeGeometry(pv1Curve, 16, 0.035, 10, false), makePulmVein());
+      tagPart(pv1, 'pulmonaryVein');
+      g.add(pv1);
+      const pv2Curve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(-0.25, 0.15, -0.15),
+        new THREE.Vector3(-0.18, 0.18, -0.1),
+        new THREE.Vector3(-0.1, 0.2, -0.05),
+      ]);
+      const pv2 = new THREE.Mesh(new THREE.TubeGeometry(pv2Curve, 16, 0.035, 10, false), makePulmVein());
+      tagPart(pv2, 'pulmonaryVein');
+      g.add(pv2);
+
+      // Arteri koroner sekunder (detail permukaan, tidak bisa di-pick)
+      const coronaryCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0.0, 0.15, 0.32),
+        new THREE.Vector3(0.15, 0.05, 0.3),
+        new THREE.Vector3(0.18, -0.15, 0.22),
+        new THREE.Vector3(0.1, -0.3, 0.15),
+      ]);
+      const coronary = new THREE.Mesh(
+        new THREE.TubeGeometry(coronaryCurve, 32, 0.018, 8, false),
+        makeArtery()
+      );
+      g.add(coronary);
+
+      // Apex (ujung bawah jantung) — bagian dari ventrikel kiri
+      const apex = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.18, 24), makeMuscle(false));
+      apex.position.set(0.05, -0.42, 0.0);
+      apex.rotation.z = 0.3;
+      tagPart(apex, 'leftVentricle');
+      g.add(apex);
+
+      return g;
+    }
+
+    let heartMesh = null;
+    let heartLoaded = false;
+
+    // Coba load GLB. Jika 404 / error → fallback procedural.
+    // Letakkan file di: assets/heart.glb (relative ke HTML)
+    const loader = new GLTFLoader();
+    const HEART_GLB_PATH = 'assets/heart.glb';
+
+    function fitToUnitBox(obj) {
+      // Normalisasi ukuran model: bounding box → muat di ~0.8 unit.
+      const bbox = new THREE.Box3().setFromObject(obj);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      bbox.getSize(size);
+      bbox.getCenter(center);
+      const maxDim = Math.max(size.x, size.y, size.z);
+      if (maxDim > 0) {
+        const targetSize = 0.8;
+        obj.scale.multiplyScalar(targetSize / maxDim);
+      }
+      obj.position.sub(center.multiplyScalar(targetSize / Math.max(size.x, size.y, size.z, 1)));
+    }
+
+    function useProceduralHeart() {
+      heartMesh = buildProceduralHeart();
+      heartGroup.add(heartMesh);
+      heartLoaded = true;
+    }
+
+    loader.load(
+      HEART_GLB_PATH,
+      (gltf) => {
+        heartMesh = gltf.scene;
+        fitToUnitBox(heartMesh);
+        heartGroup.add(heartMesh);
+        heartLoaded = true;
+      },
+      undefined,
+      (err) => {
+        console.warn('GLB tidak tersedia, pakai procedural heart:', err?.message || err);
+        useProceduralHeart();
+      }
+    );
+
+    // Highlight ring (visual cue saat tangan dekat)
+    const ringGeo = new THREE.TorusGeometry(0.55, 0.015, 16, 64);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xff2bd6,
+      transparent: true,
+      opacity: 0,
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = Math.PI / 2;
+    heartGroup.add(ring);
+
+    // ---------------------------------------------------------------------
+    // [3b] 3D LABEL — sprite billboard yang menampilkan judul + deskripsi
+    // bagian terpilih. Selalu menghadap kamera (THREE.Sprite). Diletakkan
+    // di scene root (bukan heartGroup) supaya skala teks tidak mengikuti
+    // scale jantung saat user pinch resize.
+    // ---------------------------------------------------------------------
+    const labelCanvas = document.createElement('canvas');
+    labelCanvas.width = 1024;
+    labelCanvas.height = 512;
+    const labelCtx = labelCanvas.getContext('2d');
+    const labelTexture = new THREE.CanvasTexture(labelCanvas);
+    labelTexture.minFilter = THREE.LinearFilter;
+    labelTexture.magFilter = THREE.LinearFilter;
+    const labelSpriteMat = new THREE.SpriteMaterial({
+      map: labelTexture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      opacity: 0,
+    });
+    const labelSprite = new THREE.Sprite(labelSpriteMat);
+    labelSprite.scale.set(1.2, 0.6, 1);
+    labelSprite.renderOrder = 999;
+    scene.add(labelSprite);
+
+    // Garis penghubung dari label ke bagian (visual cue posisi).
+    const leaderGeo = new THREE.BufferGeometry();
+    leaderGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const leaderMat = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0,
+    });
+    const leaderLine = new THREE.Line(leaderGeo, leaderMat);
+    leaderLine.renderOrder = 998;
+    scene.add(leaderLine);
+
+    // Render judul + deskripsi (multiline) ke canvas. Dipanggil saat part
+    // terpilih berganti.
+    function drawLabel(partId) {
+      const part = PARTS[partId];
+      if (!part) return;
+      const W = labelCanvas.width;
+      const H = labelCanvas.height;
+      const ctx = labelCtx;
+      ctx.clearRect(0, 0, W, H);
+
+      // Background pill
+      const pad = 28;
+      const radius = 32;
+      ctx.fillStyle = 'rgba(15, 20, 35, 0.92)';
+      ctx.strokeStyle = '#' + part.color.toString(16).padStart(6, '0');
+      ctx.lineWidth = 6;
+      roundRect(ctx, pad, pad, W - pad * 2, H - pad * 2, radius);
+      ctx.fill();
+      ctx.stroke();
+
+      // Judul
+      ctx.fillStyle = '#' + part.color.toString(16).padStart(6, '0');
+      ctx.font = 'bold 64px "Segoe UI", Arial, sans-serif';
+      ctx.textBaseline = 'top';
+      ctx.textAlign = 'left';
+      ctx.fillText(part.title, pad + 32, pad + 24);
+
+      // Garis pemisah
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(pad + 32, pad + 108);
+      ctx.lineTo(W - pad - 32, pad + 108);
+      ctx.stroke();
+
+      // Deskripsi (word wrap)
+      ctx.fillStyle = '#f0f0f0';
+      ctx.font = '34px "Segoe UI", Arial, sans-serif';
+      wrapText(ctx, part.desc, pad + 32, pad + 132, W - pad * 2 - 64, 44);
+
+      labelTexture.needsUpdate = true;
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+      const words = text.split(' ');
+      let line = '';
+      let yy = y;
+      for (let n = 0; n < words.length; n++) {
+        const testLine = line ? line + ' ' + words[n] : words[n];
+        const metrics = ctx.measureText(testLine);
+        if (metrics.width > maxWidth && line) {
+          ctx.fillText(line, x, yy);
+          line = words[n];
+          yy += lineHeight;
+        } else {
+          line = testLine;
+        }
+      }
+      if (line) ctx.fillText(line, x, yy);
+    }
+
+    // Untuk menemukan bagian yang ditunjuk: ambil semua mesh ber-partId,
+    // hitung jarak indexTip → titik pada bounding-sphere mesh dalam world space.
+    // Lebih murah dari raycast & cocok untuk "proximity pick" gestural.
+    function getPickableMeshes() {
+      const out = [];
+      if (!heartMesh) return out;
+      heartMesh.traverse((o) => {
+        if (o.isMesh && o.userData.partId) out.push(o);
+      });
+      return out;
+    }
+
+    function setHighlight(partId) {
+      const meshes = getPickableMeshes();
+      for (const m of meshes) {
+        const isOn = m.userData.partId === partId;
+        const mat = m.material;
+        if (!mat || !mat.emissive) continue;
+        if (isOn) {
+          mat.emissive.setHex(PARTS[partId].color);
+          mat.emissiveIntensity = 0.6;
+        } else {
+          mat.emissive.setHex(0x000000);
+          mat.emissiveIntensity = 1;
+        }
+      }
+    }
+
+    function onResize() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h, false);
+    }
+    window.addEventListener('resize', onResize);
+    onResize();
+
+    // ---------------------------------------------------------------------
+    // [4] GESTURE HELPERS — sama dengan webar-handtracking
+    // ---------------------------------------------------------------------
+    function dist(a, b) {
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      const dz = (a.z || 0) - (b.z || 0);
+      return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    function palmCenter(lm) {
+      const idxs = [0, 5, 9, 13, 17];
+      let x = 0, y = 0, z = 0;
+      for (const i of idxs) {
+        x += lm[i].x; y += lm[i].y; z += lm[i].z || 0;
+      }
+      return { x: x / idxs.length, y: y / idxs.length, z: z / idxs.length };
+    }
+
+    function palmSize(lm) {
+      return dist(lm[0], lm[9]);
+    }
+
+    function isClosedFist(lm) {
+      if (isPointing(lm)) return false;
+      const wrist = lm[0];
+      const tips = [8, 12, 16, 20];
+      const mcps = [5, 9, 13, 17];
+      let folded = 0;
+      for (let i = 0; i < tips.length; i++) {
+        const dTip = dist(lm[tips[i]], wrist);
+        const dMcp = dist(lm[mcps[i]], wrist);
+        if (dTip < dMcp * 1.05) folded++;
+      }
+      return folded >= 3;
+    }
+
+    function isPointing(lm) {
+      // Exclusive dari two-finger rotate: kalau jari tengah juga extended,
+      // ini bukan "pointing untuk pick", tapi gesture rotate.
+      if (isTwoFingerRotate(lm)) return false;
+
+      const wrist = lm[0];
+      const indexTip = lm[8];
+      const indexMcp = lm[5];
+      const otherTips = [12, 16, 20];
+      const otherMcps = [9, 13, 17];
+
+      const dIndexTip = dist(indexTip, wrist);
+      const dIndexMcp = dist(indexMcp, wrist);
+      const indexExtended = dIndexTip > dIndexMcp * 1.2;
+
+      let folded = 0;
+      for (let i = 0; i < otherTips.length; i++) {
+        const dTip = dist(lm[otherTips[i]], wrist);
+        const dMcp = dist(lm[otherMcps[i]], wrist);
+        if (dTip < dMcp * 1.05) folded++;
+      }
+      return indexExtended && folded >= 2;
+    }
+
+    // Two-finger rotate gesture: telunjuk + jari tengah keduanya extended
+    // dan UJUNGNYA berdekatan (rapat), sementara ring & pinky terlipat.
+    // Dipakai eksklusif untuk rotasi jantung — agar tidak konflik dengan
+    // "tunjuk dengan telunjuk saja", kita cek jari tengah extended sebagai
+    // pembeda utama.
+    function isTwoFingerRotate(lm) {
+      const wrist = lm[0];
+      const indexTip = lm[8], indexMcp = lm[5];
+      const middleTip = lm[12], middleMcp = lm[9];
+      const ringTip = lm[16], ringMcp = lm[13];
+      const pinkyTip = lm[20], pinkyMcp = lm[17];
+
+      // Telunjuk & tengah harus extended (tip lebih jauh dari wrist dari MCP-nya)
+      const indexExtended = dist(indexTip, wrist) > dist(indexMcp, wrist) * 1.2;
+      const middleExtended = dist(middleTip, wrist) > dist(middleMcp, wrist) * 1.2;
+      if (!indexExtended || !middleExtended) return false;
+
+      // Ring & pinky harus terlipat
+      const ringFolded = dist(ringTip, wrist) < dist(ringMcp, wrist) * 1.1;
+      const pinkyFolded = dist(pinkyTip, wrist) < dist(pinkyMcp, wrist) * 1.1;
+      if (!ringFolded || !pinkyFolded) return false;
+
+      // Telunjuk & tengah harus RAPAT (tip-to-tip dekat). Threshold relatif
+      // terhadap panjang telunjuk biar tahan terhadap jarak tangan ke kamera.
+      const indexLen = dist(indexTip, indexMcp);
+      const tipGap = dist(indexTip, middleTip);
+      return tipGap < indexLen * 0.55;
+    }
+
+    function isOpenHand(lm) {
+      const palm = palmCenter(lm);
+      const tips = [8, 12, 16, 20];
+      const ps = palmSize(lm);
+      let extended = 0;
+      for (const t of tips) {
+        if (dist(lm[t], palm) > ps * 1.3) extended++;
+      }
+      return extended >= 3;
+    }
+
+    // Konversi koordinat MediaPipe (NDC 0..1, mirrored) ke world space.
+    function landmarkToWorld(p, depth = 1.5) {
+      const ndcX = -((p.x * 2) - 1);
+      const ndcY = -((p.y * 2) - 1);
+      const v = new THREE.Vector3(ndcX, ndcY, 0.5);
+      v.unproject(camera);
+      const dir = v.sub(camera.position).normalize();
+      return camera.position.clone().add(dir.multiplyScalar(depth));
+    }
+
+    // ---------------------------------------------------------------------
+    // [5] STATE
+    // Tanpa state-machine berat seperti webar-handtracking. Cukup mode flags:
+    //   GRAB    → kalau ada fist dekat & terkunci ke tangan
+    //   PINCH   → kalau dua telunjuk aktif, set skala dari rasio jarak
+    //   ROTATE  → kalau ada gesture "two-finger rapat" → drag tangan = rotasi
+    //   PICK    → kalau satu telunjuk dekat sebuah part → highlight + label
+    //   IDLE    → tidak ada interaksi aktif
+    // ---------------------------------------------------------------------
+    const SPAWN_POS = new THREE.Vector3(0, 0, 0);
+    const SPAWN_SCALE = 1.0;
+
+    const state = {
+      pos: SPAWN_POS.clone(),
+      smoothPos: SPAWN_POS.clone(),
+      scale: SPAWN_SCALE,
+      targetScale: SPAWN_SCALE,
+      rotX: 0,
+      rotY: 0,
+      animateBeat: true,
+      // grab
+      grabActive: false,
+      grabReleaseUntil: 0,
+      // pinch
+      pinchActive: false,
+      pinchBaseDist: 0,
+      pinchBaseScale: 1,
+      // two-finger rotate
+      rotateActive: false,
+      rotateLastPos: null,
+      // part picker
+      selectedPart: null,
+      pickStableUntil: 0,
+      // highlight
+      highlight: 0,
+    };
+
+    const GRAB_DIST_WORLD = 0.55;
+    const RELEASE_DEBOUNCE_MS = 200;
+    const PICK_RADIUS_BONUS = 0.18; // tambahkan ke bounding sphere radius part
+    const PICK_STICKY_MS = 350;      // hold label sebentar setelah telunjuk lepas
+    const SMOOTHING = 0.4;
+    const SCALE_MIN = 0.3;
+    const SCALE_MAX = 3.0;
+    const SCALE_LERP_SPEED = 8.0;
+    const ROTATE_SENSITIVITY = 3.0;  // konversi delta world-x/y → radian rotasi
+    const BOUND = 1.6;
+
+    function setMode(m) {
+      modeLabel.textContent = m;
+    }
+
+    // ===== Audio controls =====
+    btnBeatSound.addEventListener('click', () => {
+      userKickAudio();
+      audio.beatEnabled = !audio.beatEnabled;
+      btnBeatSound.textContent = audio.beatEnabled ? '♪ Beat: ON' : '♪ Beat: OFF';
+      btnBeatSound.classList.toggle('off', !audio.beatEnabled);
+      applyBeatEnabled();
+    });
+
+    btnNarration.addEventListener('click', () => {
+      userKickAudio();
+      audio.narrEnabled = !audio.narrEnabled;
+      btnNarration.textContent = audio.narrEnabled ? '🗣 Narasi: ON' : '🗣 Narasi: OFF';
+      btnNarration.classList.toggle('off', !audio.narrEnabled);
+      if (!audio.narrEnabled) stopNarration();
+    });
+
+    volumeSlider.addEventListener('input', () => {
+      audio.volume = parseInt(volumeSlider.value, 10) / 100;
+      applyVolume();
+    });
+
+    // Kick audio juga saat user pertama kali interaksi via gesture tangan
+    // detection (proxy: tombol Reset, atau pertama kali ada tangan terdeteksi).
+    // Dilakukan di animate() loop saat latestHands.length > 0 pertama kali.
+
+    // ---------------------------------------------------------------------
+    // [6] MEDIAPIPE RESULTS
+    // ---------------------------------------------------------------------
+    let latestHands = [];
+
+    function onResults(results) {
+      const hands = [];
+      if (results.multiHandLandmarks && results.multiHandedness) {
+        for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+          const lm = results.multiHandLandmarks[i];
+          const label = results.multiHandedness[i].label;
+          const palm = palmCenter(lm);
+          hands.push({
+            lm,
+            label,
+            palm,
+            palmWorld: landmarkToWorld(palm),
+            indexTipWorld: landmarkToWorld(lm[8]),
+            // posisi tengah antara telunjuk & jari tengah (titik pivot
+            // gesture rotate two-finger) — di-precompute biar konsisten.
+            twoFingerCenter: {
+              x: (lm[8].x + lm[12].x) * 0.5,
+              y: (lm[8].y + lm[12].y) * 0.5,
+              z: ((lm[8].z || 0) + (lm[12].z || 0)) * 0.5,
+            },
+            twoFingerCenterWorld: landmarkToWorld({
+              x: (lm[8].x + lm[12].x) * 0.5,
+              y: (lm[8].y + lm[12].y) * 0.5,
+            }),
+            isFist: isClosedFist(lm),
+            isOpen: isOpenHand(lm),
+            isPointing: isPointing(lm),
+            isTwoFingerRotate: isTwoFingerRotate(lm),
+          });
+        }
+      }
+      latestHands = hands;
+    }
+
+    // ---------------------------------------------------------------------
+    // [7] UPDATE LOOP
+    // ---------------------------------------------------------------------
+    let lastFrame = performance.now();
+    let fpsAccum = 0, fpsCount = 0;
+
+    function updateHud() {
+      handsCountEl.textContent = String(latestHands.length);
+      handsCountEl.className = latestHands.length > 0 ? 'ok' : 'muted';
+
+      const fmt = (h) => {
+        if (!h) return ['—', 'muted'];
+        if (h.isFist) return ['Menggenggam ✊', 'hot'];
+        if (h.isTwoFingerRotate) return ['Dua jari rapat ✌️', 'hot'];
+        if (h.isPointing) return ['Menunjuk 👉', 'ok'];
+        if (h.isOpen) return ['Terbuka ✋', 'ok'];
+        return ['Netral', 'warn'];
+      };
+      const left = latestHands.find(h => h.label === 'Left');
+      const right = latestHands.find(h => h.label === 'Right');
+      const [lt, lc] = fmt(left);
+      const [rt, rc] = fmt(right);
+      gestureLEl.textContent = lt;
+      gestureLEl.className = lc;
+      gestureREl.textContent = rt;
+      gestureREl.className = rc;
+
+      scaleLabel.textContent = state.scale.toFixed(2) + 'x';
+    }
+
+    function tickControls(now) {
+      if (!heartLoaded) return;
+
+      // Auto-kick audio saat pertama kali ada interaksi (tangan terdeteksi).
+      // Browser butuh user gesture; menunjukkan tangan dianggap intent.
+      if (!audio.started && latestHands.length > 0) {
+        userKickAudio();
+      }
+
+      let mode = 'IDLE';
+      state.highlight = 0;
+
+      // ===== GRAB =====
+      // Cari fist terdekat ke jantung. Kalau dalam jangkauan → grab.
+      let fistHand = null;
+      let fistDist = Infinity;
+      for (const h of latestHands) {
+        if (!h.isFist) continue;
+        const d = h.palmWorld.distanceTo(state.smoothPos);
+        if (d < fistDist) { fistDist = d; fistHand = h; }
+      }
+
+      if (fistHand && fistDist < GRAB_DIST_WORLD * 2.0) {
+        // Saat aktif grab, jangkauan diperbesar (sticky)
+        if (state.grabActive || fistDist < GRAB_DIST_WORLD) {
+          state.grabActive = true;
+          state.grabReleaseUntil = now + RELEASE_DEBOUNCE_MS;
+          const target = fistHand.palmWorld.clone();
+          target.x = Math.max(-BOUND, Math.min(BOUND, target.x));
+          target.y = Math.max(-BOUND, Math.min(BOUND, target.y));
+          state.pos.copy(target);
+          state.highlight = 1;
+          mode = 'GRAB';
+        }
+      } else if (state.grabActive && now > state.grabReleaseUntil) {
+        state.grabActive = false;
+      }
+
+      // ===== PINCH RESIZE =====
+      // Dua telunjuk → jarak antar index tip kontrol skala.
+      const pointingHands = latestHands.filter(h => h.isPointing);
+      if (pointingHands.length >= 2) {
+        const a = pointingHands[0].indexTipWorld;
+        const b = pointingHands[1].indexTipWorld;
+        const d = a.distanceTo(b);
+        if (!state.pinchActive) {
+          state.pinchBaseDist = Math.max(d, 0.05);
+          state.pinchBaseScale = state.targetScale;
+          state.pinchActive = true;
+        } else {
+          const ratio = d / state.pinchBaseDist;
+          state.targetScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, state.pinchBaseScale * ratio));
+        }
+        state.highlight = 1;
+        mode = mode === 'GRAB' ? 'GRAB+PINCH' : 'PINCH';
+      } else {
+        state.pinchActive = false;
+      }
+
+      // ===== TWO-FINGER ROTATE =====
+      // Gesture: telunjuk + jari tengah extended dan rapat (lihat
+      // isTwoFingerRotate). Drag tangan ini → delta x/y dari titik tengah
+      // dua jari dikonversi ke rotasi Y/X jantung. Eksklusif dari pointing
+      // (isPointing return false saat two-finger aktif), jadi tidak konflik.
+      let rotateHand = null;
+      if (!state.pinchActive && !state.grabActive) {
+        for (const h of latestHands) {
+          if (h.isTwoFingerRotate) { rotateHand = h; break; }
+        }
+      }
+      if (rotateHand) {
+        const cur = rotateHand.twoFingerCenterWorld;
+        if (state.rotateLastPos && state.rotateActive) {
+          const dx = cur.x - state.rotateLastPos.x;
+          const dy = cur.y - state.rotateLastPos.y;
+          state.rotY += dx * ROTATE_SENSITIVITY;
+          state.rotX += -dy * ROTATE_SENSITIVITY;
+          // clamp rotX agar tidak terbalik penuh
+          state.rotX = Math.max(-1.4, Math.min(1.4, state.rotX));
+        }
+        state.rotateLastPos = { x: cur.x, y: cur.y };
+        state.rotateActive = true;
+        state.highlight = 1;
+        mode = mode === 'IDLE' ? 'ROTATE' : (mode + '+ROT');
+      } else {
+        state.rotateActive = false;
+        state.rotateLastPos = null;
+      }
+
+      // ===== PART PICKER =====
+      // Satu telunjuk (tanpa pinch dua telunjuk, dan bukan two-finger rotate)
+      // → cari part terdekat ke ujung telunjuk. Pakai bounding sphere
+      // world-space tiap mesh sebagai "hit volume" sederhana.
+      let pickedPart = null;
+      let pickIndexTipWorld = null;
+      if (!state.pinchActive && !state.grabActive && !state.rotateActive) {
+        const pointing = latestHands.find(h => h.isPointing);
+        if (pointing) {
+          pickIndexTipWorld = pointing.indexTipWorld;
+          const meshes = getPickableMeshes();
+          let bestDist = Infinity;
+          let bestPart = null;
+          for (const m of meshes) {
+            // bounding sphere mesh dalam world space
+            if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+            const sphere = m.geometry.boundingSphere.clone();
+            sphere.applyMatrix4(m.matrixWorld);
+            const d = pickIndexTipWorld.distanceTo(sphere.center);
+            const reach = sphere.radius + PICK_RADIUS_BONUS;
+            if (d < reach && d < bestDist) {
+              bestDist = d;
+              bestPart = m.userData.partId;
+            }
+          }
+          if (bestPart) {
+            pickedPart = bestPart;
+            state.pickStableUntil = now + PICK_STICKY_MS;
+          }
+        }
+      }
+
+      // Sticky behavior: kalau telunjuk sempat hilang sebentar, tetap tampil.
+      if (pickedPart) {
+        if (state.selectedPart !== pickedPart) {
+          state.selectedPart = pickedPart;
+          drawLabel(pickedPart);
+          setHighlight(pickedPart);
+          // Trigger narasi (TTS) untuk part baru. Akan no-op kalau audio
+          // global atau narasi di-mute. Cancel utterance sebelumnya supaya
+          // tidak menumpuk saat user pindah-pindah part cepat.
+          if (audio.lastSpokenPart !== pickedPart) {
+            audio.lastSpokenPart = pickedPart;
+            speakPart(pickedPart);
+          }
+        }
+        state.highlight = 1;
+        mode = mode === 'IDLE' ? 'PICK' : (mode + '+PICK');
+      } else if (state.selectedPart && now > state.pickStableUntil) {
+        // Lepas seleksi setelah sticky window habis & tidak ada part baru.
+        // Tapi pertahankan label saat user grab/pinch (visual context).
+        if (!state.grabActive && !state.pinchActive) {
+          state.selectedPart = null;
+          setHighlight(null);
+          stopNarration();
+        }
+      }
+
+      setMode(mode);
+
+      // Hint dinamis
+      if (mode === 'IDLE') {
+        if (latestHands.length === 0) {
+          hintEl.textContent = '✋ Tunjukkan tangan ke kamera untuk berinteraksi';
+        } else {
+          hintEl.textContent = '👉 Tunjuk bagian • ✌️ rapat = rotasi • ✊ = pindah • 👉👉 = scale';
+        }
+      } else if (mode.startsWith('ROTATE')) {
+        hintEl.textContent = '✌️ Geser dua jari rapat untuk memutar';
+      } else if (mode.startsWith('PICK')) {
+        const p = PARTS[state.selectedPart];
+        hintEl.textContent = p ? `👉 ${p.title}` : '👉 Bagian terpilih';
+      } else if (mode.startsWith('GRAB')) {
+        hintEl.textContent = '✊ Genggam aktif — buka tangan untuk lepas';
+      } else if (mode.startsWith('PINCH')) {
+        hintEl.textContent = `🤏 Pinch resize — ${state.scale.toFixed(2)}x`;
+      }
+    }
+
+    function animate(now) {
+      requestAnimationFrame(animate);
+      const dt = Math.min(0.05, (now - lastFrame) / 1000);
+      lastFrame = now;
+
+      // FPS
+      fpsAccum += 1 / Math.max(dt, 1e-4);
+      fpsCount++;
+      if (fpsCount >= 20) {
+        fpsEl.textContent = Math.round(fpsAccum / fpsCount);
+        fpsAccum = 0; fpsCount = 0;
+      }
+
+      updateHud();
+      tickControls(now);
+
+      // Smoothing posisi
+      state.smoothPos.lerp(state.pos, SMOOTHING);
+
+      // Smoothing scale
+      state.scale += (state.targetScale - state.scale) * Math.min(1, SCALE_LERP_SPEED * dt);
+
+      // Apply ke heartGroup
+      heartGroup.position.copy(state.smoothPos);
+
+      // Detak (beat) — pulse sinusoidal halus
+      let beatScale = 1.0;
+      if (state.animateBeat) {
+        // 70 BPM ≈ 1.17 Hz; ambil 1 Hz untuk visualisasi
+        const t = now * 0.001 * 1.0 * Math.PI * 2;
+        const beat = 1 + Math.sin(t) * 0.04 + Math.max(0, Math.sin(t * 2)) * 0.03;
+        beatScale = beat;
+      }
+      heartGroup.scale.setScalar(state.scale * beatScale);
+
+      // Rotasi: hanya dari user lewat gesture two-finger (state.rotX/rotY).
+      // Tidak ada auto-rotate.
+      heartGroup.rotation.set(state.rotX, state.rotY, 0);
+
+      // Ring highlight
+      const targetRing = state.highlight ? 0.5 : 0.0;
+      ringMat.opacity += (targetRing - ringMat.opacity) * Math.min(1, 6 * dt);
+      ring.rotation.z += dt * 0.8;
+
+      // Label sprite: posisi & visibilitas
+      if (state.selectedPart && heartMesh) {
+        // Cari mesh pertama yang cocok dengan partId untuk anchor posisi.
+        let anchorWorld = null;
+        heartMesh.traverse((o) => {
+          if (anchorWorld) return;
+          if (o.isMesh && o.userData.partId === state.selectedPart) {
+            if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+            const c = o.geometry.boundingSphere.center.clone();
+            o.localToWorld(c);
+            anchorWorld = c;
+          }
+        });
+        if (anchorWorld) {
+          // Adaptive placement: coba 4 kandidat posisi (kanan-atas, kiri-atas,
+          // kanan-bawah, kiri-bawah) relatif kamera, lalu pilih yang seluruh
+          // bounding box label-nya muat di viewport NDC dengan margin. Kalau
+          // tak ada yang muat sempurna → clamp posisi center label.
+          const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+          const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+
+          const sprW = labelSprite.scale.x; // world units (full width)
+          const sprH = labelSprite.scale.y;
+          const offX = 0.55 + sprW * 0.5;   // jarak dari anchor ke center label
+          const offY = 0.25 + sprH * 0.5;
+          const candidates = [
+            { sx: +1, sy: +1 }, // kanan-atas
+            { sx: -1, sy: +1 }, // kiri-atas
+            { sx: +1, sy: -1 }, // kanan-bawah
+            { sx: -1, sy: -1 }, // kiri-bawah
+          ];
+
+          // Helper: proyeksi titik world → NDC (x,y di [-1,1] jika dalam frustum).
+          const projectNDC = (v) => {
+            const p = v.clone().project(camera);
+            return { x: p.x, y: p.y, z: p.z };
+          };
+
+          const MARGIN = 0.06; // margin viewport NDC (≈ 3% layar)
+          let chosen = null;
+          let chosenCenter = null;
+          let chosenScore = -Infinity;
+
+          for (const cand of candidates) {
+            const center = anchorWorld.clone()
+              .add(camRight.clone().multiplyScalar(cand.sx * offX))
+              .add(camUp.clone().multiplyScalar(cand.sy * offY));
+
+            // Sampel 4 sudut bbox label untuk dicek di NDC.
+            const corners = [
+              center.clone().add(camRight.clone().multiplyScalar(-sprW * 0.5)).add(camUp.clone().multiplyScalar(-sprH * 0.5)),
+              center.clone().add(camRight.clone().multiplyScalar(+sprW * 0.5)).add(camUp.clone().multiplyScalar(-sprH * 0.5)),
+              center.clone().add(camRight.clone().multiplyScalar(-sprW * 0.5)).add(camUp.clone().multiplyScalar(+sprH * 0.5)),
+              center.clone().add(camRight.clone().multiplyScalar(+sprW * 0.5)).add(camUp.clone().multiplyScalar(+sprH * 0.5)),
+            ];
+            let fits = true;
+            let worstMargin = Infinity;
+            for (const cr of corners) {
+              const n = projectNDC(cr);
+              const mLeft = n.x - (-1 + MARGIN);
+              const mRight = (1 - MARGIN) - n.x;
+              const mBot = n.y - (-1 + MARGIN);
+              const mTop = (1 - MARGIN) - n.y;
+              const minM = Math.min(mLeft, mRight, mBot, mTop);
+              if (minM < 0) fits = false;
+              if (minM < worstMargin) worstMargin = minM;
+            }
+            // Score: kandidat yang fit menang; di antara yang fit, ambil yang
+            // pertama (priority order). Kalau tidak ada yang fit, ambil yang
+            // worstMargin paling besar (paling sedikit keluar).
+            if (fits) {
+              chosen = cand;
+              chosenCenter = center;
+              break;
+            }
+            if (worstMargin > chosenScore) {
+              chosenScore = worstMargin;
+              chosen = cand;
+              chosenCenter = center;
+            }
+          }
+
+          // Clamp final: kalau center masih keluar viewport, geser ke dalam
+          // dengan menambah delta sepanjang sumbu kamera (bukan world).
+          const cNdc = projectNDC(chosenCenter);
+          const halfNdcW = (sprW * 0.5) / Math.abs(chosenCenter.clone().sub(camera.position).length() * Math.tan(camera.fov * 0.5 * Math.PI / 180) * camera.aspect);
+          const halfNdcH = (sprH * 0.5) / Math.abs(chosenCenter.clone().sub(camera.position).length() * Math.tan(camera.fov * 0.5 * Math.PI / 180));
+          const maxX = 1 - MARGIN - halfNdcW;
+          const maxY = 1 - MARGIN - halfNdcH;
+          const minX = -1 + MARGIN + halfNdcW;
+          const minY = -1 + MARGIN + halfNdcH;
+
+          let shiftX = 0, shiftY = 0;
+          if (cNdc.x > maxX) shiftX = cNdc.x - maxX;
+          else if (cNdc.x < minX) shiftX = cNdc.x - minX;
+          if (cNdc.y > maxY) shiftY = cNdc.y - maxY;
+          else if (cNdc.y < minY) shiftY = cNdc.y - minY;
+
+          if (shiftX !== 0 || shiftY !== 0) {
+            // Konversi shift NDC ke world units pada kedalaman center.
+            const dist = chosenCenter.clone().sub(camera.position).length();
+            const worldPerNdcY = Math.tan(camera.fov * 0.5 * Math.PI / 180) * dist;
+            const worldPerNdcX = worldPerNdcY * camera.aspect;
+            chosenCenter
+              .add(camRight.clone().multiplyScalar(-shiftX * worldPerNdcX))
+              .add(camUp.clone().multiplyScalar(-shiftY * worldPerNdcY));
+          }
+
+          labelSprite.position.copy(chosenCenter);
+
+          // Leader line: dari anchor → corner label terdekat ke anchor
+          // (sisi yang menghadap part). Pakai chosen.sx/sy untuk memilih sudut.
+          const cornerOffset = camRight.clone().multiplyScalar(-chosen.sx * sprW * 0.5)
+            .add(camUp.clone().multiplyScalar(-chosen.sy * sprH * 0.5));
+          const leaderEnd = chosenCenter.clone().add(cornerOffset);
+
+          const positions = leaderGeo.attributes.position.array;
+          positions[0] = anchorWorld.x;
+          positions[1] = anchorWorld.y;
+          positions[2] = anchorWorld.z;
+          positions[3] = leaderEnd.x;
+          positions[4] = leaderEnd.y;
+          positions[5] = leaderEnd.z;
+          leaderGeo.attributes.position.needsUpdate = true;
+
+          labelSpriteMat.opacity += (1 - labelSpriteMat.opacity) * Math.min(1, 8 * dt);
+          leaderMat.opacity += (0.6 - leaderMat.opacity) * Math.min(1, 8 * dt);
+        }
+      } else {
+        labelSpriteMat.opacity += (0 - labelSpriteMat.opacity) * Math.min(1, 8 * dt);
+        leaderMat.opacity += (0 - leaderMat.opacity) * Math.min(1, 8 * dt);
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // ---------------------------------------------------------------------
+    // [8] BOOT
+    // ---------------------------------------------------------------------
+    async function startMediaPipe() {
+      if (typeof Hands === 'undefined' || typeof Camera === 'undefined') {
+        throw new Error('Library MediaPipe gagal dimuat. Periksa koneksi internet.');
+      }
+      const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`,
+      });
+      hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 0,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.5,
+      });
+      hands.onResults(onResults);
+
+      const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+      const cam = new Camera(videoEl, {
+        onFrame: async () => { await hands.send({ image: videoEl }); },
+        width: isMobile ? 480 : 640,
+        height: isMobile ? 360 : 480,
+        facingMode: 'user',
+      });
+      await cam.start();
+    }
+
+    (async function boot() {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('Browser tidak mendukung akses kamera (getUserMedia).');
+        }
+        // Tunggu sampai heart model siap (procedural atau GLB)
+        // Procedural fallback dipanggil di onError, tapi kalau GLB sangat lambat
+        // kita kasih timeout 4 detik agar tidak nge-block boot.
+        const heartReadyPromise = new Promise((resolve) => {
+          const start = performance.now();
+          const check = () => {
+            if (heartLoaded) return resolve();
+            if (performance.now() - start > 4000) {
+              if (!heartLoaded) {
+                console.warn('Timeout load GLB, pakai procedural.');
+                useProceduralHeart();
+              }
+              return resolve();
+            }
+            requestAnimationFrame(check);
+          };
+          check();
+        });
+
+        loaderText.innerHTML = 'Meminta akses kamera...';
+        await startMediaPipe();
+        await heartReadyPromise;
+        loaderText.innerHTML = 'Siap! ✋ Arahkan tangan ke jantung.';
+        setTimeout(() => loaderEl.classList.add('hidden'), 500);
+        requestAnimationFrame(animate);
+      } catch (err) {
+        console.error(err);
+        errorMsg.textContent = err.message || 'Terjadi kesalahan tak terduga.';
+        errorEl.classList.add('show');
+        loaderEl.classList.add('hidden');
+      }
+    })();
+  </script>
+</body>
+
+</html>
