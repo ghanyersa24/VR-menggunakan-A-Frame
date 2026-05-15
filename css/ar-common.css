@@ -1,0 +1,196 @@
+/* ============================================================
+ * AR Common Styles
+ * ------------------------------------------------------------
+ * Shared CSS untuk semua halaman AR (webar-handtracking,
+ * naruto, webar-organ). Pola yang sama persis: reset, body,
+ * camera/canvas layers, HUD badge, hint bar, back button,
+ * loader, error overlay.
+ *
+ * File-specific styles (FX effects naruto, hand-canvas
+ * positioning organ, etc.) tetap inline di HTML masing-masing.
+ * ============================================================ */
+
+/* ---------- Design tokens ---------- */
+:root {
+  --color-bg: #000;
+  --color-text: #fff;
+  --color-text-muted: #c0c0d0;
+  --color-text-dim: #ddd;
+
+  --color-accent-red: #e94560;
+  --color-accent-orange: #f5a623;
+  --color-success: #4ade80;
+  --color-warn: #f5a623;
+  --color-muted: #a0a0c0;
+  --color-hot: #e94560;
+
+  --color-overlay-dark: rgba(0, 0, 0, 0.55);
+  --color-overlay-hint: rgba(0, 0, 0, 0.6);
+  --color-overlay-loader: rgba(10, 10, 20, 0.85);
+  --color-overlay-error: rgba(20, 0, 0, 0.9);
+  --color-border-soft: rgba(255, 255, 255, 0.12);
+
+  --radius-md: 10px;
+  --radius-pill: 999px;
+
+  --z-camera: 1;
+  --z-three: 2;
+  --z-hand: 3;
+  --z-hud: 3;
+  --z-fx: 4;
+  --z-loader: 10;
+  --z-error: 20;
+
+  --font-stack: 'Segoe UI', Arial, sans-serif;
+}
+
+/* ---------- Reset ---------- */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-bg);
+  font-family: var(--font-stack);
+  color: var(--color-text);
+}
+
+/* ---------- HUD badge (top-left info panel) ---------- */
+#hud {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: var(--z-hud);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.badge {
+  background: var(--color-overlay-dark);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--color-border-soft);
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #f5f5f5;
+  pointer-events: auto;
+  min-width: 170px;
+}
+
+.badge b {
+  color: var(--color-accent-orange);
+}
+
+/* ---------- Status color modifiers ---------- */
+.ok { color: var(--color-success); }
+.warn { color: var(--color-warn); }
+.muted { color: var(--color-muted); }
+.hot { color: var(--color-hot); }
+
+/* ---------- Back button (top-right) ---------- */
+#back-btn {
+  pointer-events: auto;
+  background: linear-gradient(90deg, var(--color-accent-red), var(--color-accent-orange));
+  color: var(--color-text);
+  text-decoration: none;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+/* ---------- Hint pill (bottom center) ---------- */
+#hint {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-hud);
+  background: var(--color-overlay-hint);
+  border: 1px solid var(--color-border-soft);
+  padding: 10px 16px;
+  border-radius: var(--radius-pill);
+  font-size: 13px;
+  max-width: 90%;
+  text-align: center;
+  backdrop-filter: blur(8px);
+  transition: opacity 0.3s;
+}
+
+/* ---------- Loader overlay ---------- */
+#loader {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-loader);
+  background: var(--color-overlay-loader);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  transition: opacity 0.5s;
+}
+
+#loader.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#loader p {
+  color: var(--color-text-muted);
+  font-size: 14px;
+  text-align: center;
+  max-width: 80%;
+}
+
+.spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--color-accent-orange);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---------- Error overlay ---------- */
+#error {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-error);
+  background: var(--color-overlay-error);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+
+#error.show {
+  display: flex;
+}
+
+#error h3 {
+  color: var(--color-accent-red);
+  margin-bottom: 8px;
+}
+
+#error p {
+  color: var(--color-text-dim);
+  font-size: 14px;
+  line-height: 1.5;
+}

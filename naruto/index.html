@@ -11,96 +11,39 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 
+  <link rel="stylesheet" href="../css/ar-common.css">
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    html, body {
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: #000;
-      font-family: 'Segoe UI', Arial, sans-serif;
-      color: #fff;
-    }
-
+    /* ---------- Page-specific: source video + render canvas ---------- */
     #v_src, #out {
       position: absolute; top: 0; left: 0;
       width: 100vw; height: 100vh;
       object-fit: cover; transform: scaleX(-1);
     }
-    #out { z-index: 2; pointer-events: none; }
+    #v_src { z-index: var(--z-camera); }
+    #out { z-index: var(--z-three); pointer-events: none; }
+
+    /* ---------- Page-specific: tinting & FX layers ---------- */
     .darkness {
       position: absolute; top: 0; left: 0;
       width: 100vw; height: 100vh;
       background: rgba(10, 5, 0, 0.3);
       mix-blend-mode: multiply; pointer-events: none; z-index: 5;
     }
+
     .fx {
       position: absolute; height: auto; top: 0; left: 0;
       transform: translate(-50%, -50%);
       pointer-events: none; display: none;
-      mix-blend-mode: screen; z-index: 20;
+      mix-blend-mode: screen; z-index: var(--z-error);
     }
+
     #n { width: 1600px; }
     #s { width: 2400px; }
 
-    #hud {
-      position: absolute;
-      top: 12px;
-      left: 12px;
-      right: 12px;
-      z-index: 30;
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 8px;
-      pointer-events: none;
-    }
-
-    .badge {
-      background: rgba(0, 0, 0, 0.55);
-      backdrop-filter: blur(8px);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      padding: 8px 12px;
-      border-radius: 10px;
-      font-size: 12px;
-      line-height: 1.5;
-      color: #f5f5f5;
-      pointer-events: auto;
-      min-width: 170px;
-    }
-
-    .badge b { color: #f5a623; }
-    .ok { color: #4ade80; }
-    .warn { color: #f5a623; }
-    .muted { color: #a0a0c0; }
-
-    #back-btn {
-      pointer-events: auto;
-      background: linear-gradient(90deg, #e94560, #f5a623);
-      color: #fff;
-      text-decoration: none;
-      padding: 8px 14px;
-      border-radius: 10px;
-      font-weight: 600;
-      font-size: 12px;
-    }
-
-    #hint {
-      position: absolute;
-      bottom: 18px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 30;
-      background: rgba(0, 0, 0, 0.6);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      padding: 10px 16px;
-      border-radius: 999px;
-      font-size: 13px;
-      max-width: 90%;
-      text-align: center;
-      backdrop-filter: blur(8px);
-    }
+    /* ---------- Page-specific: HUD & hint pakai z lebih tinggi
+                 supaya tetap di atas FX layer ---------- */
+    #hud { z-index: 30; }
+    #hint { z-index: 30; }
   </style>
 </head>
 <body>
