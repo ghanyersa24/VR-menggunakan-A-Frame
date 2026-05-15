@@ -329,65 +329,81 @@
     // sebelum timer habis, timer di-cancel dan dijadwal ulang — jadi user
     // bisa "ganti pilihan" tanpa narasi salah ikut diucapkan.
     function speakPart(partId) {
-      if (!audio.enabled || !audio.narrEnabled) return;
-      if (!window.speechSynthesis) return;
+      if (!window.speechSynthesis) {
+        console.warn('[TTS] speechSynthesis tidak tersedia di browser');
+        return;
+      }
+      if (!audio.enabled || !audio.narrEnabled) {
+        console.log('[TTS] skip: audio disabled', { enabled: audio.enabled, narrEnabled: audio.narrEnabled });
+        return;
+      }
       const part = getParts()[partId];
-      if (!part) return;
+      if (!part) {
+        console.warn('[TTS] partId tidak ditemukan:', partId);
+        return;
+      }
 
-      // Batalkan pending narasi sebelumnya (jika ada) & hentikan utterance
-      // yang sedang berjalan supaya tidak menumpuk. Hanya panggil cancel()
-      // kalau memang ada utterance yang aktif/pending — call cancel() saat
-      // tidak ada apa-apa kadang membuat speak() berikutnya silent di Chrome.
+      // Batalkan pending narasi sebelumnya (jika ada).
       if (audio.pendingNarrationTimer) {
         clearTimeout(audio.pendingNarrationTimer);
         audio.pendingNarrationTimer = null;
-      }
-      if (speechSynthesis.speaking || speechSynthesis.pending) {
-        try { speechSynthesis.cancel(); } catch (_) { /* no-op */ }
       }
       audio.pendingNarrationPart = partId;
 
       audio.pendingNarrationTimer = setTimeout(() => {
         audio.pendingNarrationTimer = null;
-        // Re-check kondisi saat timer firing — bisa saja user mute, atau
-        // pindah part lagi di antara delay (yang berarti timer ini sudah
-        // tidak relevan tapi belum sempat di-clearTimeout).
         if (!audio.enabled || !audio.narrEnabled) return;
         if (audio.pendingNarrationPart !== partId) return;
         const p = getParts()[partId];
         if (!p) return;
 
-        // WORKAROUND Chrome: speechSynthesis.cancel() yang dipanggil
-        // berulang kadang membuat speak() berikutnya tidak menghasilkan
-        // suara. Solusi: pastikan kondisi reset sebelum speak, lalu
-        // resume kalau di-pause. Lihat:
-        // https://bugs.chromium.org/p/chromium/issues/detail?id=509488
-        if (speechSynthesis.paused) {
-          try { speechSynthesis.resume(); } catch (_) { /* no-op */ }
-        }
+        // Cancel utterance lama TEPAT SEBELUM speak baru. Penting: setelah
+        // cancel(), Chrome kadang masuk state "stuck" di mana speak()
+        // berikutnya tidak firing onstart. Workaround: pause+resume cycle
+        // setelah speak() untuk "kick" engine keluar dari stuck state.
+        try { speechSynthesis.cancel(); } catch (_) { /* no-op */ }
 
         const text = `${p.title}. ${p.desc}`;
         const u = new SpeechSynthesisUtterance(text);
         u.lang = 'id-ID';
         u.rate = 1.0;
         u.pitch = 1.0;
-        u.volume = audio.volume;
+        u.volume = audio.volume > 0 ? audio.volume : 1.0;
         if (!audio.voice) audio.voice = pickIndonesianVoice();
         if (audio.voice) u.voice = audio.voice;
+        u.onstart = () => console.log('[TTS] mulai:', partId);
+        u.onend = () => console.log('[TTS] selesai:', partId);
         u.onerror = (ev) => {
-          // 'canceled' / 'interrupted' = event normal saat user pindah
-          // ke part lain dan kita panggil cancel(). Tidak perlu diributkan.
           const err = ev.error || ev.type;
           if (err === 'canceled' || err === 'interrupted') return;
-          console.warn('TTS error:', err);
+          console.warn('[TTS] error:', err, ev);
         };
         audio.currentUtterance = u;
         audio.lastSpokenPart = partId;
         audio.pendingNarrationPart = null;
         try {
           speechSynthesis.speak(u);
+          // Kick engine: pause lalu resume. Workaround Chromium bug
+          // crbug.com/509488 — tanpa ini, voice Indonesia (Damayanti dkk)
+          // sering stuck di queue tanpa fire onstart.
+          speechSynthesis.pause();
+          speechSynthesis.resume();
+
+          // Watchdog: Chrome auto-pause utterance setelah ~15 detik. Resume
+          // periodik supaya narasi panjang tidak terpotong.
+          if (audio.ttsWatchdog) clearInterval(audio.ttsWatchdog);
+          audio.ttsWatchdog = setInterval(() => {
+            if (!speechSynthesis.speaking) {
+              clearInterval(audio.ttsWatchdog);
+              audio.ttsWatchdog = null;
+              return;
+            }
+            if (speechSynthesis.paused) speechSynthesis.resume();
+          }, 5000);
+
+          console.log('[TTS] speak() called for:', partId, '| voice:', u.voice?.name || 'default', '| volume:', u.volume);
         } catch (err) {
-          console.warn('TTS speak gagal:', err);
+          console.warn('[TTS] speak() throw:', err);
         }
       }, audio.narrationDelayMs);
     }
@@ -396,6 +412,10 @@
       if (audio.pendingNarrationTimer) {
         clearTimeout(audio.pendingNarrationTimer);
         audio.pendingNarrationTimer = null;
+      }
+      if (audio.ttsWatchdog) {
+        clearInterval(audio.ttsWatchdog);
+        audio.ttsWatchdog = null;
       }
       audio.pendingNarrationPart = null;
       if (window.speechSynthesis) speechSynthesis.cancel();
@@ -409,17 +429,29 @@
       ensureAudioCtx();
       if (audio.ctx && audio.ctx.state === 'suspended') audio.ctx.resume();
       // Load voice list (kadang baru tersedia setelah event 'voiceschanged')
-      if (window.speechSynthesis && !audio.voice) {
-        audio.voice = pickIndonesianVoice();
+      if (window.speechSynthesis) {
+        if (!audio.voice) audio.voice = pickIndonesianVoice();
         speechSynthesis.onvoiceschanged = () => {
           audio.voice = pickIndonesianVoice();
+          console.log('[TTS] voices loaded, picked:', audio.voice?.name, audio.voice?.lang);
         };
+        // Warm up TTS engine dengan utterance kosong — beberapa browser
+        // butuh ini sebelum speak() pertama yang sebenarnya jalan.
+        try {
+          const warmup = new SpeechSynthesisUtterance(' ');
+          warmup.volume = 0;
+          speechSynthesis.speak(warmup);
+          console.log('[TTS] warm-up sent. Available voices:', speechSynthesis.getVoices().length);
+        } catch (e) {
+          console.warn('[TTS] warm-up gagal:', e);
+        }
       }
       // Jika ada organ yang sudah aktif (mis. user kembali dari mode pilihan),
       // mulai loop suara organ tsb. Saat pertama kali di selector mode, tidak
       // ada organ aktif → tidak ada suara loop (selector hening).
       if (state.activeOrgan) startOrganAudioLoop(state.activeOrgan);
       audio.started = true;
+      console.log('[Audio] kicked. SpeechSynthesis available:', !!window.speechSynthesis);
     }
 
     // ---------------------------------------------------------------------
