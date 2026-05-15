@@ -50,6 +50,22 @@
       pointer-events: none;
     }
 
+    #hand-canvas {
+      /* Canvas dimensi = frame video, lalu di-scale & mirror via CSS sama
+         persis dengan video element di belakangnya. Pendekatan ini (sama
+         dengan naruto/index.html) memastikan koordinat landmark MediaPipe
+         langsung 1:1 dengan pixel canvas — tanpa konversi manual. */
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      transform: scaleX(-1);
+      z-index: 3;
+      pointer-events: none;
+    }
+
     #hud {
       position: absolute;
       top: 12px;
@@ -122,57 +138,6 @@
       text-align: center;
       backdrop-filter: blur(8px);
       transition: opacity 0.3s;
-    }
-
-    #toolbar {
-      position: absolute;
-      bottom: 70px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 3;
-      display: flex;
-      gap: 8px;
-      pointer-events: auto;
-    }
-
-    .tool-btn {
-      background: rgba(0, 0, 0, 0.55);
-      backdrop-filter: blur(8px);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      color: #fff;
-      padding: 8px 14px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.2s, border-color 0.2s;
-    }
-
-    .tool-btn:hover {
-      background: rgba(233, 69, 96, 0.3);
-      border-color: #e94560;
-    }
-
-    .tool-btn.off {
-      opacity: 0.5;
-      text-decoration: line-through;
-    }
-
-    .slider-wrap {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      background: rgba(0, 0, 0, 0.55);
-      backdrop-filter: blur(8px);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      padding: 4px 10px;
-      border-radius: 999px;
-    }
-
-    #volume-slider {
-      width: 80px;
-      accent-color: #e94560;
-      cursor: pointer;
     }
 
     #loader {
@@ -248,6 +213,7 @@
   <div id="container">
     <video id="video" playsinline autoplay muted></video>
     <canvas id="three-canvas"></canvas>
+    <canvas id="hand-canvas"></canvas>
 
     <div id="hud">
       <div class="badge">
@@ -261,16 +227,7 @@
       <a href="index.html" id="back-btn">← Kembali</a>
     </div>
 
-    <div id="hint">👉 Tunjuk bagian • ✌️ rapat = rotasi • ✊ = pindah • 👉👉 = scale</div>
-
-    <div id="toolbar">
-      <button class="tool-btn" id="btn-beat-sound" title="Suara detak jantung">♪ Beat: ON</button>
-      <button class="tool-btn" id="btn-narration" title="Suara narasi bagian">🗣 Narasi: ON</button>
-      <div class="slider-wrap" title="Volume">
-        <span style="font-size:12px;">🔈</span>
-        <input type="range" id="volume-slider" min="0" max="100" value="70" />
-      </div>
-    </div>
+    <div id="hint">👉 Tunjuk salah satu kotak untuk memilih organ</div>
 
     <div id="loader">
       <div class="spinner"></div>
@@ -297,23 +254,37 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js"
     crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"
+    crossorigin="anonymous"></script>
 
   <script type="module">
     /* =====================================================================
-     * WebAR Jantung — Hand Control + Pembelajaran Bagian Jantung
+     * WebAR Organ — Hand Control + Pembelajaran Anatomi
      * ---------------------------------------------------------------------
-     * Skema kontrol:
-     *   • Jantung di-spawn otomatis di tengah layar saat halaman dimuat
-     *     (tanpa auto-rotate — rotasi sepenuhnya kontrol user).
-     *   • Fist (kepalan) dekat jantung → grab → ikuti gerakan tangan.
+     * Arsitektur modular:
+     *   js/organs/index.js      → registry agregator
+     *   js/organs/heart.js      → jantung (parts, builder, audio, pulse)
+     *   js/organs/lungs.js      → paru-paru (parts, builder, audio, pulse)
+     * Tiap module export default { key, title, icon, color, parts,
+     * glbPath, audioPath, build, pulse }. Untuk menambah organ baru:
+     * buat file module baru, register di index.js, selesai — tidak ada
+     * perubahan di file ini.
+     * ---------------------------------------------------------------------
+     * App mode:
+     *   • SELECTING — dua box pilihan (Jantung / Paru-paru) tampil di scene.
+     *     Tunjuk salah satu dengan telunjuk dan tahan ≈0.8 detik → spawn.
+     *   • ACTIVE — organ terpilih tampil di tengah layar. Thumbs up (👍)
+     *     untuk despawn organ & kembali ke SELECTING.
+     *
+     * Skema kontrol saat ACTIVE:
+     *   • Fist (kepalan) dekat organ → grab → ikuti gerakan tangan.
      *   • Dua tangan menunjuk (telunjuk) → pinch resize berdasar jarak.
      *   • Satu telunjuk dekat sebuah bagian → highlight + label 3D dengan
      *     deskripsi pembelajaran muncul mengambang di samping bagian.
      *   • Two-finger rapat (telunjuk + jari tengah dirapatkan, ring & pinky
-     *     terlipat) → drag tangan = rotasi X/Y jantung. Eksklusif dari
+     *     terlipat) → drag tangan = rotasi X/Y organ. Eksklusif dari
      *     pointing biasa karena cek "jari tengah extended" sebagai pembeda.
-     *   • Toolbar bawah hanya berisi kontrol audio: Beat / Narasi + slider
-     *     volume.
+     *   • Toolbar bawah: kontrol audio Beat / Narasi + slider volume.
      *
      * Audio:
      *   • Heartbeat lub-dub disintesis live via Web Audio API (oscillator
@@ -333,12 +304,15 @@
 
     import * as THREE from 'three';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { ORGANS, ORGAN_ORDER } from './js/organs/index.js';
 
     // ---------------------------------------------------------------------
     // [1] DOM REFS
     // ---------------------------------------------------------------------
     const videoEl = document.getElementById('video');
     const canvasEl = document.getElementById('three-canvas');
+    const handCanvas = document.getElementById('hand-canvas');
+    const handCtx = handCanvas.getContext('2d');
     const modeLabel = document.getElementById('mode-label');
     const handsCountEl = document.getElementById('hands-count');
     const gestureLEl = document.getElementById('gesture-l');
@@ -350,9 +324,6 @@
     const loaderText = document.getElementById('loader-text');
     const errorEl = document.getElementById('error');
     const errorMsg = document.getElementById('error-msg');
-    const btnBeatSound = document.getElementById('btn-beat-sound');
-    const btnNarration = document.getElementById('btn-narration');
-    const volumeSlider = document.getElementById('volume-slider');
 
     // ---------------------------------------------------------------------
     // [2] THREE.JS SETUP
@@ -391,7 +362,13 @@
       masterGain: null,
       beatGain: null,
       narrGain: null,
-      beatTimer: null,
+      // <audio> element per organ + MediaElementAudioSourceNode-nya.
+      // Routing: <audio> → MediaElementSource → beatGain → masterGain → out.
+      // Pakai file MP3 asli (assets/heart.mp3, assets/lungs.mp3) yang
+      // di-loop kontinyu — lebih realistis dari synth procedural.
+      organElements: {},  // { heart: HTMLAudioElement, lungs: HTMLAudioElement }
+      organSources: {},   // { heart: MediaElementAudioSourceNode, ... }
+      activeOrganLoop: null,
       enabled: true,
       beatEnabled: true,
       narrEnabled: true,
@@ -406,6 +383,12 @@
       pendingNarrationTimer: null,
       pendingNarrationPart: null,
     };
+
+    // URL asset suara per organ — derive dari ORGANS registry. Tiap organ
+    // module mendefinisikan audioPath sendiri di metadata-nya.
+    const ORGAN_AUDIO_SRC = Object.fromEntries(
+      Object.entries(ORGANS).map(([key, def]) => [key, def.audioPath])
+    );
 
     function ensureAudioCtx() {
       if (audio.ctx) {
@@ -425,79 +408,60 @@
       audio.beatGain = ctx.createGain();
       audio.beatGain.gain.value = audio.beatEnabled ? 1.0 : 0.0;
       audio.beatGain.connect(audio.masterGain);
+
+      // Buat <audio> element + MediaElementAudioSourceNode untuk tiap organ.
+      // Dibuat sekali saat AudioContext pertama dibuat. File akan di-fetch
+      // saat .play() pertama dipanggil (browser akan stream/cache otomatis).
+      for (const [key, src] of Object.entries(ORGAN_AUDIO_SRC)) {
+        const el = new Audio(src);
+        el.loop = true;
+        el.preload = 'auto';
+        el.crossOrigin = 'anonymous';
+        audio.organElements[key] = el;
+        try {
+          const node = ctx.createMediaElementSource(el);
+          node.connect(audio.beatGain);
+          audio.organSources[key] = node;
+        } catch (e) {
+          // Fallback: kalau MediaElementSource gagal, biarkan <audio> output
+          // langsung ke speaker. Volume tetap pakai el.volume.
+          console.warn('MediaElementSource gagal untuk', key, e);
+        }
+      }
       return ctx;
     }
 
-    // Sintesis satu "lub" atau "dub" — burst frekuensi rendah dengan envelope
-    // cepat naik & turun. Lub (S1) lebih panjang dan rendah, dub (S2) lebih
-    // pendek dan sedikit lebih tinggi. Ditambah noise band untuk tekstur.
-    function synthThump(when, freq, dur, gain) {
-      const ctx = audio.ctx;
-      if (!ctx) return;
-      // Oscillator utama
-      const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq * 1.2, when);
-      osc.frequency.exponentialRampToValueAtTime(freq * 0.6, when + dur);
-
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0, when);
-      g.gain.linearRampToValueAtTime(gain, when + 0.012);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
-      osc.connect(g).connect(audio.beatGain);
-      osc.start(when);
-      osc.stop(when + dur + 0.02);
-
-      // Tekstur noise pendek (mimics turbulensi katup)
-      const bufferSize = Math.floor(ctx.sampleRate * 0.04);
-      const noiseBuf = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-      const data = noiseBuf.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) {
-        data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
-      }
-      const noise = ctx.createBufferSource();
-      noise.buffer = noiseBuf;
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'lowpass';
-      bp.frequency.value = 220;
-      const ng = ctx.createGain();
-      ng.gain.setValueAtTime(0, when);
-      ng.gain.linearRampToValueAtTime(gain * 0.5, when + 0.006);
-      ng.gain.exponentialRampToValueAtTime(0.0001, when + dur * 0.7);
-      noise.connect(bp).connect(ng).connect(audio.beatGain);
-      noise.start(when);
-      noise.stop(when + dur + 0.02);
-    }
-
-    // Satu cycle lub-dub. BPM standar istirahat ~70 → ~0.86s per beat.
-    function playLubDub(bpm = 70) {
-      const ctx = audio.ctx;
-      if (!ctx) return;
-      const now = ctx.currentTime;
-      // S1 ("lub") — penutupan katup mitral/trikuspid, frekuensi lebih rendah
-      synthThump(now, 55, 0.22, 0.45);
-      // S2 ("dub") — penutupan katup aorta/pulmoner, sekitar 0.30s setelah S1
-      synthThump(now + 0.30, 80, 0.16, 0.35);
-    }
-
-    function startBeatLoop() {
-      stopBeatLoop();
+    // Loop suara organ dengan file MP3 asli (audio elements yang sudah
+    // dibuat di ensureAudioCtx). Putar yang aktif, pause yang lain.
+    function startOrganAudioLoop(organKey) {
+      stopOrganAudioLoop();
       if (!audio.ctx) return;
-      const interval = 60 / 70 * 1000; // 70 BPM
-      // Putar pertama langsung, lalu setiap interval.
-      playLubDub();
-      audio.beatTimer = setInterval(() => {
-        if (audio.enabled && audio.beatEnabled && state.animateBeat) {
-          playLubDub();
-        }
-      }, interval);
+      const el = audio.organElements[organKey];
+      if (!el) return;
+      audio.activeOrganLoop = organKey;
+      // Kalau MediaElementSource sukses dibuat, volume di-kontrol via
+      // beatGain. Kalau fallback, set el.volume langsung agar tetap responsif.
+      if (!audio.organSources[organKey]) {
+        el.volume = (audio.enabled && audio.beatEnabled) ? audio.volume : 0;
+      }
+      el.currentTime = 0;
+      const playPromise = el.play();
+      if (playPromise && playPromise.catch) {
+        playPromise.catch((err) => {
+          console.warn(`Gagal play ${organKey}.mp3:`, err?.message || err);
+        });
+      }
     }
 
-    function stopBeatLoop() {
-      if (audio.beatTimer) {
-        clearInterval(audio.beatTimer);
-        audio.beatTimer = null;
+    function stopOrganAudioLoop() {
+      if (audio.activeOrganLoop) {
+        const el = audio.organElements[audio.activeOrganLoop];
+        if (el) {
+          el.pause();
+          el.currentTime = 0;
+        }
       }
+      audio.activeOrganLoop = null;
     }
 
     // ----- Narasi (TTS) -----
@@ -517,16 +481,20 @@
     function speakPart(partId) {
       if (!audio.enabled || !audio.narrEnabled) return;
       if (!window.speechSynthesis) return;
-      const part = PARTS[partId];
+      const part = getParts()[partId];
       if (!part) return;
 
       // Batalkan pending narasi sebelumnya (jika ada) & hentikan utterance
-      // yang sedang berjalan supaya tidak menumpuk.
+      // yang sedang berjalan supaya tidak menumpuk. Hanya panggil cancel()
+      // kalau memang ada utterance yang aktif/pending — call cancel() saat
+      // tidak ada apa-apa kadang membuat speak() berikutnya silent di Chrome.
       if (audio.pendingNarrationTimer) {
         clearTimeout(audio.pendingNarrationTimer);
         audio.pendingNarrationTimer = null;
       }
-      speechSynthesis.cancel();
+      if (speechSynthesis.speaking || speechSynthesis.pending) {
+        try { speechSynthesis.cancel(); } catch (_) { /* no-op */ }
+      }
       audio.pendingNarrationPart = partId;
 
       audio.pendingNarrationTimer = setTimeout(() => {
@@ -536,8 +504,17 @@
         // tidak relevan tapi belum sempat di-clearTimeout).
         if (!audio.enabled || !audio.narrEnabled) return;
         if (audio.pendingNarrationPart !== partId) return;
-        const p = PARTS[partId];
+        const p = getParts()[partId];
         if (!p) return;
+
+        // WORKAROUND Chrome: speechSynthesis.cancel() yang dipanggil
+        // berulang kadang membuat speak() berikutnya tidak menghasilkan
+        // suara. Solusi: pastikan kondisi reset sebelum speak, lalu
+        // resume kalau di-pause. Lihat:
+        // https://bugs.chromium.org/p/chromium/issues/detail?id=509488
+        if (speechSynthesis.paused) {
+          try { speechSynthesis.resume(); } catch (_) { /* no-op */ }
+        }
 
         const text = `${p.title}. ${p.desc}`;
         const u = new SpeechSynthesisUtterance(text);
@@ -547,8 +524,21 @@
         u.volume = audio.volume;
         if (!audio.voice) audio.voice = pickIndonesianVoice();
         if (audio.voice) u.voice = audio.voice;
+        u.onerror = (ev) => {
+          // 'canceled' / 'interrupted' = event normal saat user pindah
+          // ke part lain dan kita panggil cancel(). Tidak perlu diributkan.
+          const err = ev.error || ev.type;
+          if (err === 'canceled' || err === 'interrupted') return;
+          console.warn('TTS error:', err);
+        };
         audio.currentUtterance = u;
-        speechSynthesis.speak(u);
+        audio.lastSpokenPart = partId;
+        audio.pendingNarrationPart = null;
+        try {
+          speechSynthesis.speak(u);
+        } catch (err) {
+          console.warn('TTS speak gagal:', err);
+        }
       }, audio.narrationDelayMs);
     }
 
@@ -575,17 +565,11 @@
           audio.voice = pickIndonesianVoice();
         };
       }
-      startBeatLoop();
+      // Jika ada organ yang sudah aktif (mis. user kembali dari mode pilihan),
+      // mulai loop suara organ tsb. Saat pertama kali di selector mode, tidak
+      // ada organ aktif → tidak ada suara loop (selector hening).
+      if (state.activeOrgan) startOrganAudioLoop(state.activeOrgan);
       audio.started = true;
-    }
-
-    function applyVolume() {
-      if (audio.masterGain) audio.masterGain.gain.value = audio.enabled ? audio.volume : 0;
-      // TTS volume berlaku per-utterance saat dibuat; tidak bisa di-set live.
-    }
-
-    function applyBeatEnabled() {
-      if (audio.beatGain) audio.beatGain.gain.value = audio.beatEnabled ? 1.0 : 0.0;
     }
 
     // ---------------------------------------------------------------------
@@ -593,56 +577,23 @@
     // Group root agar transform (posisi/skala/rotasi) lewat satu titik.
     // Coba load GLB dulu; jika gagal → procedural heart dari primitif.
     // ---------------------------------------------------------------------
-    const heartGroup = new THREE.Group();
-    scene.add(heartGroup);
+    const organContainer = new THREE.Group();
+    scene.add(organContainer);
 
     // ---------------------------------------------------------------------
-    // [3a] PARTS METADATA — bagian yang bisa dipilih untuk pembelajaran.
-    // Tiap mesh yang berhubungan dengan part ini akan diberi userData.partId
-    // sehingga raycaster/proximity-picker bisa mengidentifikasi targetnya.
+    // [3a] ORGANS — di-import dari ./js/organs/index.js. Tiap organ punya
+    // file module sendiri (heart.js, lungs.js, ...) yang mendefinisikan
+    // metadata, parts, builder procedural, GLB path, audio path, dan
+    // visual pulse function. Lihat js/organs/heart.js sebagai contoh
+    // kontrak module.
     // ---------------------------------------------------------------------
-    const PARTS = {
-      leftVentricle: {
-        title: 'Ventrikel Kiri',
-        desc: 'Bilik kiri jantung — pemompa utama yang mendorong darah kaya oksigen ke seluruh tubuh melalui aorta. Memiliki dinding otot paling tebal.',
-        color: 0xffeb3b,
-      },
-      rightVentricle: {
-        title: 'Ventrikel Kanan',
-        desc: 'Bilik kanan jantung — memompa darah miskin oksigen ke paru-paru melalui arteri pulmonalis untuk dioksigenasi.',
-        color: 0xffeb3b,
-      },
-      leftAtrium: {
-        title: 'Atrium Kiri',
-        desc: 'Serambi kiri — menerima darah kaya oksigen dari paru-paru melalui vena pulmonalis, lalu menyalurkannya ke ventrikel kiri.',
-        color: 0x4ade80,
-      },
-      rightAtrium: {
-        title: 'Atrium Kanan',
-        desc: 'Serambi kanan — menerima darah miskin oksigen dari seluruh tubuh melalui vena cava, lalu menyalurkannya ke ventrikel kanan.',
-        color: 0x4ade80,
-      },
-      aorta: {
-        title: 'Aorta',
-        desc: 'Pembuluh arteri terbesar dalam tubuh. Membawa darah kaya oksigen dari ventrikel kiri ke seluruh organ tubuh.',
-        color: 0xff6b9d,
-      },
-      pulmonaryArtery: {
-        title: 'Arteri Pulmonalis',
-        desc: 'Pembuluh arteri yang membawa darah miskin oksigen dari ventrikel kanan menuju paru-paru. Satu-satunya arteri yang membawa darah miskin oksigen.',
-        color: 0xff6b9d,
-      },
-      venaCava: {
-        title: 'Vena Cava',
-        desc: 'Vena terbesar dalam tubuh. Vena cava superior membawa darah dari kepala/lengan, vena cava inferior dari tubuh bagian bawah, keduanya menuju atrium kanan.',
-        color: 0x60a5fa,
-      },
-      pulmonaryVein: {
-        title: 'Vena Pulmonalis',
-        desc: 'Pembuluh vena yang membawa darah kaya oksigen dari paru-paru kembali ke atrium kiri. Satu-satunya vena yang membawa darah kaya oksigen.',
-        color: 0x60a5fa,
-      },
-    };
+
+    // Helper: ambil parts dari organ yang sedang aktif. Sebelumnya ada
+    // konstanta global PARTS — sekarang dinamis berdasarkan state.activeOrgan.
+    function getParts() {
+      if (!state || !state.activeOrgan) return {};
+      return ORGANS[state.activeOrgan].parts;
+    }
 
     // Tag mesh dengan partId & simpan warna emissive asal untuk highlight restore.
     function tagPart(mesh, partId) {
@@ -654,171 +605,10 @@
       }
     }
 
-    // Procedural heart: gabungan beberapa shape merah/pink/biru menyerupai
-    // jantung anatomis dasar (ventrikel kiri/kanan, atrium, aorta, vena cava,
-    // arteri pulmonalis). Bukan akurasi medis — visualisasi edukatif.
-    // Setiap bagian di-tag userData.partId agar bisa di-pick.
-    function buildProceduralHeart() {
-      const g = new THREE.Group();
 
-      // Material per-part agar highlight (emissive boost) tidak mempengaruhi
-      // bagian lain yang share material yang sama.
-      const makeMuscle = (dark = false) => new THREE.MeshStandardMaterial({
-        color: dark ? 0x7a1418 : 0xa31e23,
-        roughness: dark ? 0.6 : 0.55,
-        metalness: 0.05,
-        emissive: 0x000000,
-        emissiveIntensity: 1,
-      });
-      const makeArtery = () => new THREE.MeshStandardMaterial({
-        color: 0xc94545,
-        roughness: 0.5,
-        metalness: 0.1,
-        emissive: 0x000000,
-      });
-      const makeVein = () => new THREE.MeshStandardMaterial({
-        color: 0x3a5fb8,
-        roughness: 0.55,
-        metalness: 0.1,
-        emissive: 0x000000,
-      });
-      const makePulmonary = () => new THREE.MeshStandardMaterial({
-        color: 0x6b8acc,
-        roughness: 0.55,
-        metalness: 0.1,
-        emissive: 0x000000,
-      });
-      const makePulmVein = () => new THREE.MeshStandardMaterial({
-        color: 0xa83a6a,
-        roughness: 0.55,
-        metalness: 0.1,
-        emissive: 0x000000,
-      });
-
-      // Ventrikel kiri (bulb besar)
-      const leftVent = new THREE.Mesh(new THREE.SphereGeometry(0.35, 32, 24), makeMuscle(false));
-      leftVent.scale.set(1.0, 1.3, 0.95);
-      leftVent.position.set(-0.05, -0.15, 0);
-      tagPart(leftVent, 'leftVentricle');
-      g.add(leftVent);
-
-      // Ventrikel kanan (bulb lebih kecil, sedikit ke depan)
-      const rightVent = new THREE.Mesh(new THREE.SphereGeometry(0.28, 32, 24), makeMuscle(true));
-      rightVent.scale.set(0.9, 1.15, 0.95);
-      rightVent.position.set(0.22, -0.1, 0.05);
-      tagPart(rightVent, 'rightVentricle');
-      g.add(rightVent);
-
-      // Atrium kiri (atas kiri)
-      const leftAtr = new THREE.Mesh(new THREE.SphereGeometry(0.18, 24, 18), makeMuscle(false));
-      leftAtr.scale.set(1.0, 0.9, 1.0);
-      leftAtr.position.set(-0.1, 0.22, -0.05);
-      tagPart(leftAtr, 'leftAtrium');
-      g.add(leftAtr);
-
-      // Atrium kanan
-      const rightAtr = new THREE.Mesh(new THREE.SphereGeometry(0.16, 24, 18), makeMuscle(true));
-      rightAtr.scale.set(1.0, 0.9, 1.0);
-      rightAtr.position.set(0.2, 0.22, 0.0);
-      tagPart(rightAtr, 'rightAtrium');
-      g.add(rightAtr);
-
-      // Aorta (lengkung besar di atas)
-      const aortaCurve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(-0.05, 0.25, 0.0),
-        new THREE.Vector3(-0.05, 0.55, 0.0),
-        new THREE.Vector3(0.05, 0.7, -0.1),
-        new THREE.Vector3(0.2, 0.65, -0.2),
-        new THREE.Vector3(0.25, 0.45, -0.25),
-      ]);
-      const aorta = new THREE.Mesh(
-        new THREE.TubeGeometry(aortaCurve, 32, 0.06, 12, false),
-        makeArtery()
-      );
-      tagPart(aorta, 'aorta');
-      g.add(aorta);
-
-      // Arteri pulmonalis (di samping aorta)
-      const pulmCurve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(0.18, 0.25, 0.05),
-        new THREE.Vector3(0.18, 0.5, 0.05),
-        new THREE.Vector3(0.08, 0.62, 0.0),
-      ]);
-      const pulm = new THREE.Mesh(
-        new THREE.TubeGeometry(pulmCurve, 24, 0.05, 12, false),
-        makePulmonary()
-      );
-      tagPart(pulm, 'pulmonaryArtery');
-      g.add(pulm);
-
-      // Vena cava superior (vena biru atas)
-      const svcCurve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(0.3, 0.3, 0.0),
-        new THREE.Vector3(0.32, 0.55, 0.0),
-        new THREE.Vector3(0.3, 0.7, 0.05),
-      ]);
-      const svc = new THREE.Mesh(
-        new THREE.TubeGeometry(svcCurve, 20, 0.045, 12, false),
-        makeVein()
-      );
-      tagPart(svc, 'venaCava');
-      g.add(svc);
-
-      // Vena cava inferior (vena biru bawah)
-      const ivc = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.2, 16), makeVein());
-      ivc.position.set(0.28, -0.4, 0.0);
-      tagPart(ivc, 'venaCava');
-      g.add(ivc);
-
-      // Vena pulmonalis (4 cabang dari belakang menuju atrium kiri)
-      // Disederhanakan jadi 2 tube di kiri-belakang atrium kiri.
-      const pv1Curve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(-0.25, 0.28, -0.15),
-        new THREE.Vector3(-0.18, 0.25, -0.1),
-        new THREE.Vector3(-0.1, 0.22, -0.05),
-      ]);
-      const pv1 = new THREE.Mesh(new THREE.TubeGeometry(pv1Curve, 16, 0.035, 10, false), makePulmVein());
-      tagPart(pv1, 'pulmonaryVein');
-      g.add(pv1);
-      const pv2Curve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(-0.25, 0.15, -0.15),
-        new THREE.Vector3(-0.18, 0.18, -0.1),
-        new THREE.Vector3(-0.1, 0.2, -0.05),
-      ]);
-      const pv2 = new THREE.Mesh(new THREE.TubeGeometry(pv2Curve, 16, 0.035, 10, false), makePulmVein());
-      tagPart(pv2, 'pulmonaryVein');
-      g.add(pv2);
-
-      // Arteri koroner sekunder (detail permukaan, tidak bisa di-pick)
-      const coronaryCurve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(0.0, 0.15, 0.32),
-        new THREE.Vector3(0.15, 0.05, 0.3),
-        new THREE.Vector3(0.18, -0.15, 0.22),
-        new THREE.Vector3(0.1, -0.3, 0.15),
-      ]);
-      const coronary = new THREE.Mesh(
-        new THREE.TubeGeometry(coronaryCurve, 32, 0.018, 8, false),
-        makeArtery()
-      );
-      g.add(coronary);
-
-      // Apex (ujung bawah jantung) — bagian dari ventrikel kiri
-      const apex = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.18, 24), makeMuscle(false));
-      apex.position.set(0.05, -0.42, 0.0);
-      apex.rotation.z = 0.3;
-      tagPart(apex, 'leftVentricle');
-      g.add(apex);
-
-      return g;
-    }
-
-    let heartMesh = null;
-    let heartLoaded = false;
-
-    // Coba load GLB. Jika 404 / error → fallback procedural.
-    // Letakkan file di: assets/heart.glb (relative ke HTML)
+    let activeOrganMesh = null;
+    let organReady = false;
     const loader = new GLTFLoader();
-    const HEART_GLB_PATH = 'assets/heart.glb';
 
     function fitToUnitBox(obj) {
       // Normalisasi ukuran model: bounding box → muat di ~0.8 unit.
@@ -835,42 +625,322 @@
       obj.position.sub(center.multiplyScalar(targetSize / Math.max(size.x, size.y, size.z, 1)));
     }
 
-    function useProceduralHeart() {
-      heartMesh = buildProceduralHeart();
-      heartGroup.add(heartMesh);
-      heartLoaded = true;
+    // Hapus organ aktif dari container — dispose geometry & material.
+    function clearActiveOrgan() {
+      if (activeOrganMesh) {
+        organContainer.remove(activeOrganMesh);
+        activeOrganMesh.traverse((o) => {
+          if (o.geometry) o.geometry.dispose?.();
+          if (o.material) {
+            if (Array.isArray(o.material)) o.material.forEach(m => m.dispose?.());
+            else o.material.dispose?.();
+          }
+        });
+        activeOrganMesh = null;
+      }
+      organReady = false;
     }
 
-    loader.load(
-      HEART_GLB_PATH,
-      (gltf) => {
-        heartMesh = gltf.scene;
-        fitToUnitBox(heartMesh);
-        heartGroup.add(heartMesh);
-        heartLoaded = true;
-      },
-      undefined,
-      (err) => {
-        console.warn('GLB tidak tersedia, pakai procedural heart:', err?.message || err);
-        useProceduralHeart();
-      }
-    );
+    // Spawn organ ke organContainer. Coba GLB dulu kalau ada, kalau gagal
+    // pakai procedural builder dari organ module. Builder dipanggil dengan
+    // dependency injection { THREE, tagPart } supaya module tidak perlu
+    // import three.js langsung (three sudah di-import di file ini lewat
+    // importmap, dan tagPart hidup di scope HTML).
+    function spawnOrgan(organKey) {
+      clearActiveOrgan();
+      const def = ORGANS[organKey];
+      if (!def) return;
+      state.activeOrgan = organKey;
 
-    // Highlight ring (visual cue saat tangan dekat)
-    const ringGeo = new THREE.TorusGeometry(0.55, 0.015, 16, 64);
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: 0xff2bd6,
-      transparent: true,
-      opacity: 0,
+      const useProcedural = () => {
+        if (!def.build) return;
+        activeOrganMesh = def.build({ THREE, tagPart });
+        organContainer.add(activeOrganMesh);
+        organReady = true;
+      };
+
+      if (def.glbPath) {
+        loader.load(
+          def.glbPath,
+          (gltf) => {
+            // Hanya pakai GLB kalau organ ini masih dipilih saat callback firing.
+            if (state.activeOrgan !== organKey) return;
+            activeOrganMesh = gltf.scene;
+            fitToUnitBox(activeOrganMesh);
+            organContainer.add(activeOrganMesh);
+            organReady = true;
+          },
+          undefined,
+          () => useProcedural()
+        );
+      } else {
+        useProcedural();
+      }
+    }
+
+
+    // ---------------------------------------------------------------------
+    // [3c] SELECTOR — dua box 3D side-by-side untuk memilih organ.
+    // Box dibuat dari plane + text canvas (label "Jantung" / "Paru-paru"
+    // dengan icon). Tunjuk dengan telunjuk → spawn organ tersebut.
+    // ---------------------------------------------------------------------
+    const selectorGroup = new THREE.Group();
+    scene.add(selectorGroup);
+
+    // Helper: rounded rect path (re-usable)
+    function _roundRectPath(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    // Helper: parse hex 0xRRGGBB jadi { r, g, b }
+    function _rgbFromHex(hex) {
+      return {
+        r: (hex >> 16) & 0xff,
+        g: (hex >> 8) & 0xff,
+        b: hex & 0xff,
+      };
+    }
+
+    function makeSelectorBox(organKey, xOffset) {
+      const def = ORGANS[organKey];
+      // Canvas resolusi tinggi untuk teks crisp di plane 3D
+      const W = 640, H = 800;
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      const colorHex = '#' + def.color.toString(16).padStart(6, '0');
+      const rgb = _rgbFromHex(def.color);
+
+      function redraw(hover, progress = 0) {
+        ctx.clearRect(0, 0, W, H);
+
+        // ===== Card background (linear gradient + rounded) =====
+        const pad = 28;
+        const radius = 56;
+        const cardX = pad, cardY = pad;
+        const cardW = W - pad * 2, cardH = H - pad * 2;
+
+        // Vertical gradient: dark top → slightly tinted bottom dengan warna organ
+        const bgGrad = ctx.createLinearGradient(0, cardY, 0, cardY + cardH);
+        if (hover) {
+          bgGrad.addColorStop(0, `rgba(${rgb.r * 0.15}, ${rgb.g * 0.15}, ${rgb.b * 0.15}, 1)`);
+          bgGrad.addColorStop(1, `rgba(${rgb.r * 0.35}, ${rgb.g * 0.35}, ${rgb.b * 0.35}, 1)`);
+        } else {
+          bgGrad.addColorStop(0, 'rgb(18, 22, 38)');
+          bgGrad.addColorStop(1, `rgba(${rgb.r * 0.18}, ${rgb.g * 0.18}, ${rgb.b * 0.18}, 1)`);
+        }
+        _roundRectPath(ctx, cardX, cardY, cardW, cardH, radius);
+        ctx.fillStyle = bgGrad;
+        ctx.fill();
+
+        // Glow border (luar) — efek halo
+        ctx.save();
+        ctx.shadowColor = colorHex;
+        ctx.shadowBlur = hover ? 32 : 14;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+        ctx.strokeStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${hover ? 1.0 : 0.7})`;
+        ctx.lineWidth = hover ? 6 : 4;
+        _roundRectPath(ctx, cardX, cardY, cardW, cardH, radius);
+        ctx.stroke();
+        ctx.restore();
+
+        // Inner highlight stroke (efek glass)
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.lineWidth = 2;
+        _roundRectPath(ctx, cardX + 6, cardY + 6, cardW - 12, cardH - 12, radius - 6);
+        ctx.stroke();
+
+        // ===== Top accent bar (pill kecil bertuliskan organ tag) =====
+        const tagText = organKey.toUpperCase();
+        ctx.font = 'bold 24px "Segoe UI", -apple-system, Arial, sans-serif';
+        const tagMetrics = ctx.measureText(tagText);
+        const tagPad = 18;
+        const tagW = tagMetrics.width + tagPad * 2;
+        const tagH = 40;
+        const tagX = (W - tagW) / 2;
+        const tagY = cardY + 48;
+        _roundRectPath(ctx, tagX, tagY, tagW, tagH, tagH / 2);
+        ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.18)`;
+        ctx.fill();
+        ctx.strokeStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.5)`;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = `rgba(${Math.min(255, rgb.r + 80)}, ${Math.min(255, rgb.g + 80)}, ${Math.min(255, rgb.b + 80)}, 1)`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(tagText, W / 2, tagY + tagH / 2 + 2);
+
+        // ===== Icon container (lingkaran dengan radial gradient) =====
+        const iconCx = W / 2;
+        const iconCy = H / 2 - 40;
+        const iconR = 150;
+
+        // Lingkaran container icon — solid opaque gradient (tidak ada
+        // outer halo radial yang sebelumnya membentuk ring transparan
+        // di sekeliling icon container).
+        ctx.beginPath();
+        ctx.arc(iconCx, iconCy, iconR, 0, Math.PI * 2);
+        const circGrad = ctx.createRadialGradient(iconCx - 30, iconCy - 30, 20, iconCx, iconCy, iconR);
+        // Solid (opacity 1) supaya tidak transparan ke layer di belakang
+        circGrad.addColorStop(0, `rgba(${Math.min(255, rgb.r + 30)}, ${Math.min(255, rgb.g + 30)}, ${Math.min(255, rgb.b + 30)}, 1)`);
+        circGrad.addColorStop(1, `rgba(${rgb.r * 0.5}, ${rgb.g * 0.5}, ${rgb.b * 0.5}, 1)`);
+        ctx.fillStyle = circGrad;
+        ctx.fill();
+        // Glow tipis di sekeliling lingkaran (lewat shadow, bukan radial fill,
+        // jadi tidak meninggalkan ring transparan)
+        ctx.save();
+        ctx.shadowColor = colorHex;
+        ctx.shadowBlur = hover ? 24 : 12;
+        ctx.strokeStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.9)`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(iconCx, iconCy, iconR, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+
+        // Icon emoji di tengah container
+        ctx.font = '180px "Segoe UI Emoji", "Apple Color Emoji", Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        // Sedikit shadow drop untuk dimensi
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        ctx.fillText(def.icon, iconCx + 3, iconCy + 4);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(def.icon, iconCx, iconCy);
+
+        // Progress ring (di luar icon container)
+        if (hover && progress > 0) {
+          const ringR = iconR + 26;
+          ctx.lineWidth = 8;
+          ctx.lineCap = 'round';
+          ctx.strokeStyle = colorHex;
+          ctx.shadowColor = colorHex;
+          ctx.shadowBlur = 18;
+          ctx.beginPath();
+          ctx.arc(iconCx, iconCy, ringR, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+          ctx.lineCap = 'butt';
+        }
+
+        // ===== Title (besar, modern dengan letter-spacing) =====
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '600 64px "Segoe UI", -apple-system, Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        // Letter-spacing manual: gambar per karakter
+        const title = def.title;
+        const spacing = 2;
+        const titleY = cardY + cardH - 140;
+        const titleMetrics = ctx.measureText(title);
+        // Standard letter-spacing approach (just draw with subtle shadow)
+        ctx.shadowColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.5)`;
+        ctx.shadowBlur = hover ? 12 : 6;
+        ctx.fillText(title, W / 2, titleY);
+        ctx.shadowBlur = 0;
+
+        // ===== CTA / status hint =====
+        const ctaY = cardY + cardH - 70;
+        const ctaText = hover ? 'TAHAN UNTUK PILIH' : 'TUNJUK UNTUK MEMILIH';
+        ctx.font = '500 22px "Segoe UI", -apple-system, Arial, sans-serif';
+        ctx.fillStyle = hover
+          ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1)`
+          : 'rgba(255, 255, 255, 0.5)';
+        ctx.fillText(ctaText, W / 2, ctaY);
+
+        // Tiny dot indicator di kiri-kanan CTA
+        const dotR = 3;
+        const dotSpacing = ctx.measureText(ctaText).width / 2 + 24;
+        ctx.fillStyle = ctx.fillStyle;
+        ctx.beginPath();
+        ctx.arc(W / 2 - dotSpacing, ctaY, dotR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(W / 2 + dotSpacing, ctaY, dotR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      redraw(false);
+
+      const tex = new THREE.CanvasTexture(c);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.anisotropy = 4;
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex,
+        transparent: true,
+        side: THREE.DoubleSide,
+      });
+      // Aspect ratio sesuai canvas (4:5 portrait) — lebih modern dari square
+      const widthW = 0.9;
+      const heightW = widthW * (H / W);
+      const geo = new THREE.PlaneGeometry(widthW, heightW);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(xOffset, 0, 0);
+      mesh.userData.organKey = organKey;
+      mesh.userData.redraw = redraw;
+      mesh.userData.canvas = c;
+      mesh.userData.texture = tex;
+      mesh.userData.boxRadius = widthW * 0.65;
+      return mesh;
+    }
+
+    // Derive posisi box dari ORGAN_ORDER — center jika 1, kiri/kanan jika 2,
+    // dst. Spacing 1.2 unit antar box.
+    const SELECTOR_SPACING = 1.2;
+    const selectorBoxes = ORGAN_ORDER.map((key, i) => {
+      const offset = (i - (ORGAN_ORDER.length - 1) / 2) * SELECTOR_SPACING;
+      return makeSelectorBox(key, offset);
     });
-    const ring = new THREE.Mesh(ringGeo, ringMat);
-    ring.rotation.x = Math.PI / 2;
-    heartGroup.add(ring);
+    for (const b of selectorBoxes) selectorGroup.add(b);
+    // Angkat sedikit ke atas agar tidak overlap dengan hint bar & toolbar
+    // yang ada di bottom layar.
+    selectorGroup.position.y = 0.15;
+
+    function setSelectorVisible(visible) {
+      selectorGroup.visible = visible;
+      // Sembunyikan hint bar saat selector aktif — instruksi sudah tampil
+      // di dalam box pilihan.
+      hintEl.style.display = visible ? 'none' : 'block';
+    }
+
+    function setSelectorHover(organKey) {
+      for (const b of selectorBoxes) {
+        const isHover = b.userData.organKey === organKey;
+        b.userData.redraw(isHover, 0);
+        b.userData.texture.needsUpdate = true;
+        // Slight scale boost saat hover
+        const targetScale = isHover ? 1.1 : 1.0;
+        b.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.3);
+      }
+    }
+
+    // Update visual progress ring di box yang sedang di-hover. Dipanggil
+    // tiap frame oleh tickSelector dengan nilai 0..1.
+    function updateSelectorProgress(organKey, progress) {
+      for (const b of selectorBoxes) {
+        const isHover = b.userData.organKey === organKey;
+        if (isHover) {
+          b.userData.redraw(true, progress);
+          b.userData.texture.needsUpdate = true;
+        }
+      }
+    }
 
     // ---------------------------------------------------------------------
     // [3b] 3D LABEL — sprite billboard yang menampilkan judul + deskripsi
     // bagian terpilih. Selalu menghadap kamera (THREE.Sprite). Diletakkan
-    // di scene root (bukan heartGroup) supaya skala teks tidak mengikuti
+    // di scene root (bukan organContainer) supaya skala teks tidak mengikuti
     // scale jantung saat user pinch resize.
     // ---------------------------------------------------------------------
     const labelCanvas = document.createElement('canvas');
@@ -907,7 +977,7 @@
     // Render judul + deskripsi (multiline) ke canvas. Dipanggil saat part
     // terpilih berganti.
     function drawLabel(partId) {
-      const part = PARTS[partId];
+      const part = getParts()[partId];
       if (!part) return;
       const W = labelCanvas.width;
       const H = labelCanvas.height;
@@ -984,8 +1054,8 @@
     // Lebih murah dari raycast & cocok untuk "proximity pick" gestural.
     function getPickableMeshes() {
       const out = [];
-      if (!heartMesh) return out;
-      heartMesh.traverse((o) => {
+      if (!activeOrganMesh) return out;
+      activeOrganMesh.traverse((o) => {
         if (o.isMesh && o.userData.partId) out.push(o);
       });
       return out;
@@ -998,7 +1068,7 @@
         const mat = m.material;
         if (!mat || !mat.emissive) continue;
         if (isOn) {
-          mat.emissive.setHex(PARTS[partId].color);
+          mat.emissive.setHex(getParts()[partId].color);
           mat.emissiveIntensity = 0.6;
         } else {
           mat.emissive.setHex(0x000000);
@@ -1013,9 +1083,61 @@
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h, false);
+      // Hand canvas backing-store sekarang di-set ke dimensi video frame
+      // (di drawHandSkeleton), CSS yang men-scale ke viewport. Tidak ada
+      // yang perlu di-handle di sini.
     }
     window.addEventListener('resize', onResize);
     onResize();
+
+    // ---------------------------------------------------------------------
+    // [Hand Skeleton Overlay] — pendekatan sama dengan naruto/index.html
+    // ---------------------------------------------------------------------
+    // Canvas berukuran = videoWidth × videoHeight (frame native). Landmark
+    // MediaPipe (0..1) langsung 1:1 dengan pixel canvas — tidak butuh
+    // konversi manual. CSS object-fit:cover + scaleX(-1) menscale+mirror
+    // canvas sama persis seperti video di belakangnya.
+    //
+    // drawConnectors & drawLandmarks dari @mediapipe/drawing_utils (loaded
+    // sebagai global script). HAND_CONNECTIONS juga global dari hands.js.
+    function drawHandSkeleton() {
+      // Match canvas size to video frame (kalau video belum ready, skip)
+      if (!videoEl.videoWidth || !videoEl.videoHeight) return;
+      if (handCanvas.width !== videoEl.videoWidth) {
+        handCanvas.width = videoEl.videoWidth;
+        handCanvas.height = videoEl.videoHeight;
+      }
+      handCtx.save();
+      handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+      if (!latestHands.length) {
+        handCtx.restore();
+        return;
+      }
+
+      for (const hand of latestHands) {
+        // Warna berdasar gesture aktif (feedback visual)
+        let boneColor = '#00d4ff';   // cyan default (sama dengan naruto)
+        if (hand.isFist) boneColor = '#f97316';            // orange grab
+        else if (hand.isTwoFingerRotate) boneColor = '#a78bfa'; // purple rotate
+        else if (hand.isThumbsUp) boneColor = '#fbbf24';   // amber thumb
+        else if (hand.isPointing) boneColor = '#4ade80';   // green pointing
+
+        handCtx.save();
+        handCtx.shadowBlur = 10;
+        handCtx.shadowColor = boneColor;
+        drawConnectors(handCtx, hand.lm, HAND_CONNECTIONS, {
+          color: boneColor,
+          lineWidth: 3,
+        });
+        drawLandmarks(handCtx, hand.lm, {
+          color: '#ffffff',
+          lineWidth: 1,
+          radius: 2,
+        });
+        handCtx.restore();
+      }
+      handCtx.restore();
+    }
 
     // ---------------------------------------------------------------------
     // [4] GESTURE HELPERS — sama dengan webar-handtracking
@@ -1078,6 +1200,31 @@
       return indexExtended && folded >= 2;
     }
 
+    // Thumbs up: ibu jari extended ke atas, jari lain terlipat.
+    // Dipakai untuk despawn organ aktif & kembali ke selector.
+    function isThumbsUp(lm) {
+      const wrist = lm[0];
+      const thumbTip = lm[4], thumbIP = lm[3];
+      const tips = [8, 12, 16, 20];
+      const mcps = [5, 9, 13, 17];
+
+      // 4 jari (selain ibu jari) harus terlipat
+      let folded = 0;
+      for (let i = 0; i < tips.length; i++) {
+        if (dist(lm[tips[i]], wrist) < dist(lm[mcps[i]], wrist) * 1.05) folded++;
+      }
+      if (folded < 4) return false;
+
+      // Ibu jari extended (menjauh dari palm) & menunjuk ke atas
+      // (koordinat y MediaPipe: makin kecil = makin ke atas).
+      const palm = palmCenter(lm);
+      const ps = palmSize(lm);
+      const thumbExtended = dist(thumbTip, palm) > ps * 1.15;
+      const thumbUp = thumbTip.y < thumbIP.y;
+
+      return thumbExtended && thumbUp;
+    }
+
     // Two-finger rotate gesture: telunjuk + jari tengah keduanya extended
     // dan UJUNGNYA berdekatan (rapat), sementara ring & pinky terlipat.
     // Dipakai eksklusif untuk rotasi jantung — agar tidak konflik dengan
@@ -1118,11 +1265,64 @@
       return extended >= 3;
     }
 
-    // Konversi koordinat MediaPipe (NDC 0..1, mirrored) ke world space.
-    function landmarkToWorld(p, depth = 1.5) {
-      const ndcX = -((p.x * 2) - 1);
-      const ndcY = -((p.y * 2) - 1);
-      const v = new THREE.Vector3(ndcX, ndcY, 0.5);
+    // ===== Video frame ↔ viewport NDC mapping (untuk hit-test 3D) =====
+    // Video ditampilkan dengan `object-fit: cover` → frame di-crop agar
+    // memenuhi viewport, mempertahankan center. Hit-test untuk selector
+    // boxes 3D & picker organ butuh koordinat NDC viewport yang accurate.
+    // (Skeleton drawing TIDAK pakai helper ini — pakai pendekatan canvas
+    // = videoSize + CSS cover, lihat drawHandSkeleton.)
+    function getVideoCoverInfo() {
+      const vw = handCanvas.clientWidth;
+      const vh = handCanvas.clientHeight;
+      const fw = videoEl.videoWidth || 640;
+      const fh = videoEl.videoHeight || 480;
+      const scale = Math.max(vw / fw, vh / fh);
+      const visibleFw = vw / scale; // lebar frame yang terlihat (dalam unit frame)
+      const visibleFh = vh / scale;
+      const cropX = (fw - visibleFw) / 2; // bagian frame yang di-crop sisi kiri
+      const cropY = (fh - visibleFh) / 2;
+      return { vw, vh, fw, fh, scale, visibleFw, visibleFh, cropX, cropY };
+    }
+
+    // Landmark MediaPipe (frame fraction 0..1) → screen px (account for
+    // mirror CSS scaleX(-1) + cover crop).
+    function videoToScreen(p) {
+      const info = getVideoCoverInfo();
+      // Konversi p.x (0..1 frame) → posisi pixel di frame asli
+      const framePx = p.x * info.fw;
+      // Posisi pixel di visible frame (offset cropX)
+      const visibleFramePx = framePx - info.cropX;
+      // Skala ke viewport pixel
+      let screenX = visibleFramePx * info.scale;
+      // Mirror horizontal (CSS scaleX(-1))
+      screenX = info.vw - screenX;
+
+      const frameYpx = p.y * info.fh;
+      const visibleFrameYpx = frameYpx - info.cropY;
+      const screenY = visibleFrameYpx * info.scale;
+
+      return { x: screenX, y: screenY };
+    }
+
+    // Landmark → NDC viewport (untuk unproject ke world).
+    function videoToNdc(p) {
+      const s = videoToScreen(p);
+      const info = getVideoCoverInfo();
+      return {
+        x: (s.x / info.vw) * 2 - 1,
+        y: -((s.y / info.vh) * 2 - 1),
+      };
+    }
+
+    // Konversi koordinat MediaPipe ke world space di depth tetap, pakai
+    // transform cover-aware supaya konsisten dengan skeleton overlay.
+    // Default depth = 2.0 supaya world-z tip ≈ 0 (sama dengan plane organ
+    // di scene). Penting untuk hit-test: kalau tip dan organ di plane z
+    // berbeda, jarak Euclidean punya komponen z konstan yang membuat
+    // PICK_RADIUS_BONUS kecil tidak pernah cocok.
+    function landmarkToWorld(p, depth = 2.0) {
+      const ndc = videoToNdc(p);
+      const v = new THREE.Vector3(ndc.x, ndc.y, 0.5);
       v.unproject(camera);
       const dir = v.sub(camera.position).normalize();
       return camera.position.clone().add(dir.multiplyScalar(depth));
@@ -1141,6 +1341,13 @@
     const SPAWN_SCALE = 1.0;
 
     const state = {
+      // App state: 'SELECTING' (box pilihan tampil) atau 'ACTIVE' (organ tampil).
+      appMode: 'SELECTING',
+      activeOrgan: null,           // 'heart' | 'lungs' saat ACTIVE
+      selectorHover: null,         // organ key yang sedang di-hover di selector
+      selectorPickStableUntil: 0,
+      thumbsLatched: false,        // edge-detect thumbs up (sekali per gesture)
+
       pos: SPAWN_POS.clone(),
       smoothPos: SPAWN_POS.clone(),
       scale: SPAWN_SCALE,
@@ -1167,7 +1374,11 @@
 
     const GRAB_DIST_WORLD = 0.55;
     const RELEASE_DEBOUNCE_MS = 200;
-    const PICK_RADIUS_BONUS = 0.18; // tambahkan ke bounding sphere radius part
+    // Toleransi jarak dari UJUNG TELUNJUK (lm[8]) ke permukaan bbox part.
+    // Kecil (0.05 world unit ≈ 5cm dunia virtual) supaya hover hanya terjadi
+    // saat tip benar-benar menyentuh atau hampir menyentuh part, bukan dari
+    // sekedar mendekati area-nya.
+    const PICK_RADIUS_BONUS = 0.05;
     const PICK_STICKY_MS = 350;      // hold label sebentar setelah telunjuk lepas
     const SMOOTHING = 0.4;
     const SCALE_MIN = 0.3;
@@ -1180,31 +1391,9 @@
       modeLabel.textContent = m;
     }
 
-    // ===== Audio controls =====
-    btnBeatSound.addEventListener('click', () => {
-      userKickAudio();
-      audio.beatEnabled = !audio.beatEnabled;
-      btnBeatSound.textContent = audio.beatEnabled ? '♪ Beat: ON' : '♪ Beat: OFF';
-      btnBeatSound.classList.toggle('off', !audio.beatEnabled);
-      applyBeatEnabled();
-    });
-
-    btnNarration.addEventListener('click', () => {
-      userKickAudio();
-      audio.narrEnabled = !audio.narrEnabled;
-      btnNarration.textContent = audio.narrEnabled ? '🗣 Narasi: ON' : '🗣 Narasi: OFF';
-      btnNarration.classList.toggle('off', !audio.narrEnabled);
-      if (!audio.narrEnabled) stopNarration();
-    });
-
-    volumeSlider.addEventListener('input', () => {
-      audio.volume = parseInt(volumeSlider.value, 10) / 100;
-      applyVolume();
-    });
-
-    // Kick audio juga saat user pertama kali interaksi via gesture tangan
-    // detection (proxy: tombol Reset, atau pertama kali ada tangan terdeteksi).
-    // Dilakukan di animate() loop saat latestHands.length > 0 pertama kali.
+    // Audio (beat & narasi) selalu aktif — toggle UI sudah dihapus.
+    // userKickAudio dipanggil otomatis di animate() saat tangan pertama
+    // kali terdeteksi.
 
     // ---------------------------------------------------------------------
     // [6] MEDIAPIPE RESULTS
@@ -1239,6 +1428,7 @@
             isOpen: isOpenHand(lm),
             isPointing: isPointing(lm),
             isTwoFingerRotate: isTwoFingerRotate(lm),
+            isThumbsUp: isThumbsUp(lm),
           });
         }
       }
@@ -1257,6 +1447,7 @@
 
       const fmt = (h) => {
         if (!h) return ['—', 'muted'];
+        if (h.isThumbsUp) return ['Jempol ke atas 👍', 'hot'];
         if (h.isFist) return ['Menggenggam ✊', 'hot'];
         if (h.isTwoFingerRotate) return ['Dua jari rapat ✌️', 'hot'];
         if (h.isPointing) return ['Menunjuk 👉', 'ok'];
@@ -1275,20 +1466,134 @@
       scaleLabel.textContent = state.scale.toFixed(2) + 'x';
     }
 
-    function tickControls(now) {
-      if (!heartLoaded) return;
+    // Picker selector: pakai hit-test 2D di NDC (screen-space). Lebih reliable
+    // dari 3D distance karena depth telunjuk (z dari unproject) tidak akurat
+    // — telunjuk diproyeksi pada depth tetap, sementara box ada di z=0,
+    // sehingga 3D distance selalu punya komponen z tetap yang membuat hit-test
+    // 3D sensitif terhadap posisi awal. Proyeksi NDC menyelesaikan ini.
+    function tickSelector(now) {
+      const pointing = latestHands.find(h => h.isPointing);
+      let hovered = null;
+      if (pointing) {
+        // Proyeksi ujung telunjuk ke NDC (sama frustum dengan box)
+        const tipNdc = pointing.indexTipWorld.clone().project(camera);
 
+        let bestDist = Infinity;
+        for (const b of selectorBoxes) {
+          // Proyeksi center box ke NDC
+          const boxWorld = new THREE.Vector3();
+          b.getWorldPosition(boxWorld);
+          const boxNdc = boxWorld.project(camera);
+          // Jarak 2D di NDC (-1..1 di kedua sumbu)
+          const dx = tipNdc.x - boxNdc.x;
+          const dy = tipNdc.y - boxNdc.y;
+          const d2 = Math.sqrt(dx * dx + dy * dy);
+          // Threshold relatif ukuran NDC. Box size ~0.9 di world pada
+          // depth ~2 unit → NDC half-extent ≈ 0.3. Pakai 0.28 sebagai
+          // radius hit (sedikit lebih kecil dari edge agar tidak overlap).
+          if (d2 < 0.28 && d2 < bestDist) {
+            bestDist = d2;
+            hovered = b.userData.organKey;
+          }
+        }
+      }
+
+      if (hovered !== state.selectorHover) {
+        state.selectorHover = hovered;
+        setSelectorHover(hovered);
+        if (hovered) {
+          state.selectorPickStableUntil = now + 800; // tahan 0.8s sebelum pilih
+          hintEl.textContent = `👉 ${ORGANS[hovered].title} — tahan untuk pilih`;
+        } else {
+          hintEl.textContent = '👉 Tunjuk salah satu kotak untuk memilih organ';
+        }
+      }
+
+      // Progress ring: 0..1 berapa fraksi dari 800ms yang sudah berlalu.
+      let progress = 0;
+      if (hovered) {
+        const remaining = Math.max(0, state.selectorPickStableUntil - now);
+        progress = Math.min(1, 1 - remaining / 800);
+      }
+      updateSelectorProgress(hovered, progress);
+
+      // Konfirmasi pemilihan: telunjuk stabil di box yang sama selama window.
+      if (hovered && now >= state.selectorPickStableUntil) {
+        enterActiveMode(hovered);
+      }
+    }
+
+    function enterActiveMode(organKey) {
+      state.appMode = 'ACTIVE';
+      state.selectorHover = null;
+      setSelectorVisible(false);
+      spawnOrgan(organKey);
+      // Reset transform organ ke spawn default
+      state.pos.copy(SPAWN_POS);
+      state.smoothPos.copy(SPAWN_POS);
+      state.targetScale = SPAWN_SCALE;
+      state.scale = SPAWN_SCALE;
+      state.rotX = 0;
+      state.rotY = 0;
+      state.selectedPart = null;
+      // Mulai loop suara organ yang sesuai (heart=lub-dub, lungs=breath).
+      // Jika AudioContext belum di-start (user belum klik tombol), skip —
+      // userKickAudio nanti akan men-trigger ulang sesuai state.activeOrgan.
+      if (audio.started) startOrganAudioLoop(organKey);
+      hintEl.textContent = `${ORGANS[organKey].icon} ${ORGANS[organKey].title} aktif • 👍 untuk kembali ke pilihan`;
+    }
+
+    function exitToSelector() {
+      state.appMode = 'SELECTING';
+      state.selectedPart = null;
+      stopNarration();
+      // Hentikan suara organ — selector mode hening.
+      stopOrganAudioLoop();
+      clearActiveOrgan();
+      // Reset transform agar tidak ikut transform organ sebelumnya
+      organContainer.position.set(0, 0, 0);
+      organContainer.rotation.set(0, 0, 0);
+      organContainer.scale.setScalar(1);
+      // Bersihkan label
+      labelSpriteMat.opacity = 0;
+      leaderMat.opacity = 0;
+      setSelectorVisible(true);
+      setSelectorHover(null);
+      hintEl.textContent = '👉 Tunjuk salah satu kotak untuk memilih organ';
+    }
+
+    function tickControls(now) {
       // Auto-kick audio saat pertama kali ada interaksi (tangan terdeteksi).
       // Browser butuh user gesture; menunjukkan tangan dianggap intent.
       if (!audio.started && latestHands.length > 0) {
         userKickAudio();
       }
 
+      // ===== MODE: SELECTING =====
+      if (state.appMode === 'SELECTING') {
+        tickSelector(now);
+        setMode('SELECT');
+        return;
+      }
+
+      // ===== MODE: ACTIVE =====
+      if (!organReady) return;
+
+      // Thumbs up → kembali ke selector (edge-detect, sekali per gesture).
+      const thumbsHand = latestHands.find(h => h.isThumbsUp);
+      if (thumbsHand && !state.thumbsLatched) {
+        state.thumbsLatched = true;
+        exitToSelector();
+        return;
+      } else if (!thumbsHand) {
+        state.thumbsLatched = false;
+      }
+
       let mode = 'IDLE';
       state.highlight = 0;
 
       // ===== GRAB =====
-      // Cari fist terdekat ke jantung. Kalau dalam jangkauan → grab.
+      // Cari fist terdekat ke organ. Kalau dalam jangkauan → grab.
       let fistHand = null;
       let fistDist = Infinity;
       for (const h of latestHands) {
@@ -1314,22 +1619,37 @@
       }
 
       // ===== PINCH RESIZE =====
-      // Dua telunjuk → jarak antar index tip kontrol skala.
+      // Butuh DUA tangan berbeda (Left & Right) yang sama-sama pointing.
+      // Tanpa cek "label berbeda", MediaPipe kadang melaporkan dua deteksi
+      // dari satu tangan yang sama (mis. tangan ter-detect ulang di area
+      // wajah/leher) → ratio jarak mendadak kecil → zoom out spontan.
       const pointingHands = latestHands.filter(h => h.isPointing);
-      if (pointingHands.length >= 2) {
-        const a = pointingHands[0].indexTipWorld;
-        const b = pointingHands[1].indexTipWorld;
+      const handLabels = new Set(pointingHands.map(h => h.label));
+      const twoDistinctHands = pointingHands.length >= 2 && handLabels.size >= 2;
+      if (twoDistinctHands) {
+        // Ambil satu Left & satu Right (defensif kalau >2 deteksi)
+        const left = pointingHands.find(h => h.label === 'Left');
+        const right = pointingHands.find(h => h.label === 'Right');
+        const a = left.indexTipWorld;
+        const b = right.indexTipWorld;
         const d = a.distanceTo(b);
-        if (!state.pinchActive) {
-          state.pinchBaseDist = Math.max(d, 0.05);
-          state.pinchBaseScale = state.targetScale;
-          state.pinchActive = true;
+        // Jarak antar telunjuk realistis: jangan terima nilai ekstrim yang
+        // sering jadi penanda false-positive (tangan palsu menempel di
+        // tangan asli) — minimal 0.15 world units, maksimal 4.0.
+        if (d >= 0.15 && d <= 4.0) {
+          if (!state.pinchActive) {
+            state.pinchBaseDist = d;
+            state.pinchBaseScale = state.targetScale;
+            state.pinchActive = true;
+          } else {
+            const ratio = d / state.pinchBaseDist;
+            state.targetScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, state.pinchBaseScale * ratio));
+          }
+          state.highlight = 1;
+          mode = mode === 'GRAB' ? 'GRAB+PINCH' : 'PINCH';
         } else {
-          const ratio = d / state.pinchBaseDist;
-          state.targetScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, state.pinchBaseScale * ratio));
+          state.pinchActive = false;
         }
-        state.highlight = 1;
-        mode = mode === 'GRAB' ? 'GRAB+PINCH' : 'PINCH';
       } else {
         state.pinchActive = false;
       }
@@ -1366,8 +1686,10 @@
 
       // ===== PART PICKER =====
       // Satu telunjuk (tanpa pinch dua telunjuk, dan bukan two-finger rotate)
-      // → cari part terdekat ke ujung telunjuk. Pakai bounding sphere
-      // world-space tiap mesh sebagai "hit volume" sederhana.
+      // → cari part terdekat ke ujung telunjuk. Pakai jarak ke BOUNDING BOX
+      // mesh dalam world space (lebih akurat dari bounding sphere — sphere
+      // melebih-lebihkan part yang berbentuk pipih/half-dome seperti diafragma,
+      // sehingga sphere-nya overlap ke lobus inferior di atasnya).
       let pickedPart = null;
       let pickIndexTipWorld = null;
       if (!state.pinchActive && !state.grabActive && !state.rotateActive) {
@@ -1377,15 +1699,46 @@
           const meshes = getPickableMeshes();
           let bestDist = Infinity;
           let bestPart = null;
+          // Helper: jarak titik ke AABB world-space. Kalau titik di dalam,
+          // jarak = 0. Tie-break: pilih mesh dengan VOLUME bounding box lebih
+          // kecil (= bagian lebih spesifik) supaya diafragma yang bbox-nya
+          // overlap dengan lobus inferior tidak "mencuri" pick saat user
+          // sebenarnya menunjuk lobus.
+          //
+          // Radius hit-test ADAPTIF: part tipis seperti trakea/bronkus (tube)
+          // dapat threshold lebih longgar supaya bisa ditunjuk — tanpa ini,
+          // bbox tube ~0.07 unit terlalu kecil, tip telunjuk yang sedikit
+          // meleset langsung tidak mengenai.
+          const _tmpBox = new THREE.Box3();
+          const _tmpVec = new THREE.Vector3();
+          const _tmpSize = new THREE.Vector3();
+          let bestVolume = Infinity;
           for (const m of meshes) {
-            // bounding sphere mesh dalam world space
-            if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
-            const sphere = m.geometry.boundingSphere.clone();
-            sphere.applyMatrix4(m.matrixWorld);
-            const d = pickIndexTipWorld.distanceTo(sphere.center);
-            const reach = sphere.radius + PICK_RADIUS_BONUS;
-            if (d < reach && d < bestDist) {
+            // Hitung bounding box world-space (account for parent transforms).
+            if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+            _tmpBox.copy(m.geometry.boundingBox).applyMatrix4(m.matrixWorld);
+            _tmpBox.getSize(_tmpSize);
+            const vol = _tmpSize.x * _tmpSize.y * _tmpSize.z;
+            // Dimensi terkecil bbox menunjukkan "ketebalan" part. Untuk
+            // part tipis (< 0.12 unit), tambahkan reach proporsional supaya
+            // hit-test toleran terhadap tip yang melayang di tepi tube.
+            const minDim = Math.min(_tmpSize.x, _tmpSize.y, _tmpSize.z);
+            const radiusBonus = minDim < 0.12
+              ? PICK_RADIUS_BONUS + (0.12 - minDim) * 0.8  // extra ~0.04-0.08
+              : PICK_RADIUS_BONUS;
+
+            // Clamp index tip ke kotak → titik terdekat di permukaan/dalam kotak.
+            _tmpVec.copy(pickIndexTipWorld).clamp(_tmpBox.min, _tmpBox.max);
+            const d = pickIndexTipWorld.distanceTo(_tmpVec);
+            if (d >= radiusBonus) continue;
+
+            // Prioritas: (1) jarak lebih kecil menang; (2) jarak hampir sama
+            // (≤ 5cm world) → bbox lebih kecil (lebih spesifik) menang.
+            const closer = d < bestDist - 0.05;
+            const tieMoreSpecific = Math.abs(d - bestDist) <= 0.05 && vol < bestVolume;
+            if (closer || tieMoreSpecific) {
               bestDist = d;
+              bestVolume = vol;
               bestPart = m.userData.partId;
             }
           }
@@ -1402,13 +1755,11 @@
           state.selectedPart = pickedPart;
           drawLabel(pickedPart);
           setHighlight(pickedPart);
-          // Trigger narasi (TTS) untuk part baru. Akan no-op kalau audio
-          // global atau narasi di-mute. Cancel utterance sebelumnya supaya
-          // tidak menumpuk saat user pindah-pindah part cepat.
-          if (audio.lastSpokenPart !== pickedPart) {
-            audio.lastSpokenPart = pickedPart;
-            speakPart(pickedPart);
-          }
+          // Trigger narasi (TTS) untuk part baru. speakPart sendiri yang
+          // mengatur `lastSpokenPart` setelah narasi benar-benar dimulai
+          // (di dalam timer callback) supaya kalau user hover-balik ke part
+          // yang timer-nya keburu di-cancel, narasi masih bisa diputar.
+          speakPart(pickedPart);
         }
         state.highlight = 1;
         mode = mode === 'IDLE' ? 'PICK' : (mode + '+PICK');
@@ -1434,7 +1785,7 @@
       } else if (mode.startsWith('ROTATE')) {
         hintEl.textContent = '✌️ Geser dua jari rapat untuk memutar';
       } else if (mode.startsWith('PICK')) {
-        const p = PARTS[state.selectedPart];
+        const p = getParts()[state.selectedPart];
         hintEl.textContent = p ? `👉 ${p.title}` : '👉 Bagian terpilih';
       } else if (mode.startsWith('GRAB')) {
         hintEl.textContent = '✊ Genggam aktif — buka tangan untuk lepas';
@@ -1458,6 +1809,24 @@
 
       updateHud();
       tickControls(now);
+      drawHandSkeleton();
+
+      // ===== SELECTOR MODE: animasi box pilihan (float halus, billboard kamera)
+      if (state.appMode === 'SELECTING') {
+        const t = now * 0.001;
+        for (let i = 0; i < selectorBoxes.length; i++) {
+          const b = selectorBoxes[i];
+          // Bob halus naik-turun, beda fase per box
+          b.position.y = Math.sin(t * 1.5 + i * Math.PI) * 0.04;
+          // Selalu menghadap kamera
+          b.quaternion.copy(camera.quaternion);
+        }
+        // Skip semua organ transform & label saat SELECTING.
+        labelSpriteMat.opacity += (0 - labelSpriteMat.opacity) * Math.min(1, 8 * dt);
+        leaderMat.opacity += (0 - leaderMat.opacity) * Math.min(1, 8 * dt);
+        renderer.render(scene, camera);
+        return;
+      }
 
       // Smoothing posisi
       state.smoothPos.lerp(state.pos, SMOOTHING);
@@ -1465,33 +1834,30 @@
       // Smoothing scale
       state.scale += (state.targetScale - state.scale) * Math.min(1, SCALE_LERP_SPEED * dt);
 
-      // Apply ke heartGroup
-      heartGroup.position.copy(state.smoothPos);
+      // Apply ke organContainer
+      organContainer.position.copy(state.smoothPos);
 
-      // Detak (beat) — pulse sinusoidal halus
-      let beatScale = 1.0;
-      if (state.animateBeat) {
-        // 70 BPM ≈ 1.17 Hz; ambil 1 Hz untuk visualisasi
-        const t = now * 0.001 * 1.0 * Math.PI * 2;
-        const beat = 1 + Math.sin(t) * 0.04 + Math.max(0, Math.sin(t * 2)) * 0.03;
-        beatScale = beat;
+      // Pulse visual: delegasi ke organ module (pulse function). Heart →
+      // beat lub-dub 70 BPM, lungs → breathing 0.25 Hz. Module bisa override
+      // tanpa menyentuh file ini.
+      let pulseScale = 1.0;
+      if (state.animateBeat && state.activeOrgan) {
+        const def = ORGANS[state.activeOrgan];
+        if (def && typeof def.pulse === 'function') {
+          pulseScale = def.pulse(now);
+        }
       }
-      heartGroup.scale.setScalar(state.scale * beatScale);
+      organContainer.scale.setScalar(state.scale * pulseScale);
 
       // Rotasi: hanya dari user lewat gesture two-finger (state.rotX/rotY).
       // Tidak ada auto-rotate.
-      heartGroup.rotation.set(state.rotX, state.rotY, 0);
-
-      // Ring highlight
-      const targetRing = state.highlight ? 0.5 : 0.0;
-      ringMat.opacity += (targetRing - ringMat.opacity) * Math.min(1, 6 * dt);
-      ring.rotation.z += dt * 0.8;
+      organContainer.rotation.set(state.rotX, state.rotY, 0);
 
       // Label sprite: posisi & visibilitas
-      if (state.selectedPart && heartMesh) {
+      if (state.selectedPart && activeOrganMesh) {
         // Cari mesh pertama yang cocok dengan partId untuk anchor posisi.
         let anchorWorld = null;
-        heartMesh.traverse((o) => {
+        activeOrganMesh.traverse((o) => {
           if (anchorWorld) return;
           if (o.isMesh && o.userData.partId === state.selectedPart) {
             if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
@@ -1656,29 +2022,13 @@
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           throw new Error('Browser tidak mendukung akses kamera (getUserMedia).');
         }
-        // Tunggu sampai heart model siap (procedural atau GLB)
-        // Procedural fallback dipanggil di onError, tapi kalau GLB sangat lambat
-        // kita kasih timeout 4 detik agar tidak nge-block boot.
-        const heartReadyPromise = new Promise((resolve) => {
-          const start = performance.now();
-          const check = () => {
-            if (heartLoaded) return resolve();
-            if (performance.now() - start > 4000) {
-              if (!heartLoaded) {
-                console.warn('Timeout load GLB, pakai procedural.');
-                useProceduralHeart();
-              }
-              return resolve();
-            }
-            requestAnimationFrame(check);
-          };
-          check();
-        });
 
         loaderText.innerHTML = 'Meminta akses kamera...';
         await startMediaPipe();
-        await heartReadyPromise;
-        loaderText.innerHTML = 'Siap! ✋ Arahkan tangan ke jantung.';
+        // Mulai dari SELECTING mode — selector boxes tampil, organ belum spawn.
+        setSelectorVisible(true);
+        setSelectorHover(null);
+        loaderText.innerHTML = 'Siap! 👉 Tunjuk kotak untuk pilih organ.';
         setTimeout(() => loaderEl.classList.add('hidden'), 500);
         requestAnimationFrame(animate);
       } catch (err) {
