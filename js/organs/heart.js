@@ -18,42 +18,42 @@
 const PARTS = {
   leftVentricle: {
     title: 'Ventrikel Kiri',
-    desc: 'Bilik kiri jantung — pemompa utama yang mendorong darah kaya oksigen ke seluruh tubuh melalui aorta. Memiliki dinding otot paling tebal.',
+    desc: 'Bilik kiri jantung yang berfungsi memompa darah kaya oksigen ke seluruh tubuh melalui aorta. Memiliki dinding otot paling tebal karena harus menghasilkan tekanan tinggi untuk mendistribusikan darah ke seluruh organ tubuh.',
     color: 0xffeb3b,
   },
   rightVentricle: {
     title: 'Ventrikel Kanan',
-    desc: 'Bilik kanan jantung — memompa darah miskin oksigen ke paru-paru melalui arteri pulmonalis untuk dioksigenasi.',
+    desc: 'Bilik kanan jantung yang bertugas memompa darah miskin oksigen menuju paru-paru melalui arteri pulmonalis. Dinding ototnya lebih tipis dibanding ventrikel kiri karena hanya memompa darah ke paru-paru yang letaknya dekat.',
     color: 0xffeb3b,
   },
   leftAtrium: {
     title: 'Atrium Kiri',
-    desc: 'Serambi kiri — menerima darah kaya oksigen dari paru-paru melalui vena pulmonalis, lalu menyalurkannya ke ventrikel kiri.',
+    desc: 'Serambi kiri jantung yang menerima darah kaya oksigen dari paru-paru melalui vena pulmonalis. Darah kemudian dialirkan ke ventrikel kiri melalui katup mitral untuk dipompa ke seluruh tubuh.',
     color: 0x4ade80,
   },
   rightAtrium: {
     title: 'Atrium Kanan',
-    desc: 'Serambi kanan — menerima darah miskin oksigen dari seluruh tubuh melalui vena cava, lalu menyalurkannya ke ventrikel kanan.',
+    desc: 'Serambi kanan jantung yang menerima darah miskin oksigen dari seluruh tubuh melalui vena cava superior dan vena cava inferior. Darah selanjutnya dialirkan ke ventrikel kanan melalui katup trikuspid.',
     color: 0x4ade80,
   },
   aorta: {
     title: 'Aorta',
-    desc: 'Pembuluh arteri terbesar dalam tubuh. Membawa darah kaya oksigen dari ventrikel kiri ke seluruh organ tubuh.',
+    desc: 'Arteri terbesar dan utama dalam tubuh yang membawa darah kaya oksigen dari ventrikel kiri menuju seluruh jaringan dan organ tubuh. Aorta bercabang menjadi pembuluh arteri yang lebih kecil untuk mendistribusikan darah.',
     color: 0xff6b9d,
   },
   pulmonaryArtery: {
     title: 'Arteri Pulmonalis',
-    desc: 'Pembuluh arteri yang membawa darah miskin oksigen dari ventrikel kanan menuju paru-paru. Satu-satunya arteri yang membawa darah miskin oksigen.',
+    desc: 'Pembuluh arteri yang membawa darah miskin oksigen dari ventrikel kanan menuju paru-paru untuk proses pertukaran gas. Merupakan satu-satunya arteri yang membawa darah miskin oksigen.',
     color: 0xff6b9d,
   },
   venaCava: {
     title: 'Vena Cava',
-    desc: 'Vena terbesar dalam tubuh. Vena cava superior membawa darah dari kepala/lengan, vena cava inferior dari tubuh bagian bawah, keduanya menuju atrium kanan.',
+    desc: 'Vena terbesar dalam tubuh yang berfungsi membawa darah miskin oksigen kembali ke jantung. Vena cava superior membawa darah dari kepala dan tubuh bagian atas, sedangkan vena cava inferior membawa darah dari tubuh bagian bawah menuju atrium kanan.',
     color: 0x60a5fa,
   },
   pulmonaryVein: {
     title: 'Vena Pulmonalis',
-    desc: 'Pembuluh vena yang membawa darah kaya oksigen dari paru-paru kembali ke atrium kiri. Satu-satunya vena yang membawa darah kaya oksigen.',
+    desc: 'Pembuluh vena yang membawa darah kaya oksigen dari paru-paru kembali ke atrium kiri jantung setelah proses oksigenasi. Merupakan satu-satunya vena yang membawa darah kaya oksigen.',
     color: 0x60a5fa,
   },
 };
