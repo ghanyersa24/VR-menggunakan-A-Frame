@@ -193,43 +193,14 @@
     // plane terpisah agar bisa di-"unfold" (interpolasi antara posisi folded
     // dan posisi pada bidang datar) dengan mudah.
     // ---------------------------------------------------------------------
-    const cubeGroup = new THREE.Group();
-    cubeGroup.visible = false;
-    scene.add(cubeGroup);
-
     const CUBE_SIZE = 0.32;
     const NEON_COLOR = 0x00ffe7;
     const NEON_GRAB = 0x39ff14;
     const NEON_HIGHLIGHT = 0xff2bd6;
     const NEON_GLOW = 0x00ffff;
 
-    const fillMat = new THREE.MeshBasicMaterial({
-      color: NEON_COLOR,
-      transparent: true,
-      opacity: 0.18,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    });
-    const wireMat = new LineMaterial({
-      color: NEON_COLOR,
-      linewidth: 6,
-      transparent: true,
-      opacity: 1.0,
-      depthTest: true,
-      worldUnits: false,
-    });
-    wireMat.resolution.set(window.innerWidth, window.innerHeight);
-    const haloMat = new LineMaterial({
-      color: NEON_GLOW,
-      linewidth: 14,
-      transparent: true,
-      opacity: 0.35,
-      depthTest: true,
-      blending: THREE.AdditiveBlending,
-      worldUnits: false,
-    });
-    haloMat.resolution.set(window.innerWidth, window.innerHeight);
-
+    // Geometri di-share antar semua kubus (immutable). Material per-kubus
+    // dibuat lewat createCube() agar warna/opacity bisa berubah independen.
     const faceGeo = new THREE.PlaneGeometry(CUBE_SIZE, CUBE_SIZE);
     const HALF = CUBE_SIZE / 2;
     const faceEdges = new THREE.EdgesGeometry(faceGeo);
@@ -268,39 +239,9 @@
       return new THREE.Mesh(labelGeo, mat);
     }
 
-    function buildFace(number) {
-      const g = new THREE.Group();
-      const fill = new THREE.Mesh(faceGeo, fillMat);
-      fill.position.y = HALF;
-      g.add(fill);
-      const wire = new Line2(faceLineSegGeo, wireMat);
-      wire.computeLineDistances();
-      wire.position.y = HALF;
-      g.add(wire);
-      const halo = new Line2(faceLineSegGeo, haloMat);
-      halo.computeLineDistances();
-      halo.position.y = HALF;
-      g.add(halo);
-      if (number !== undefined) {
-        const label = makeNumberSprite(number);
-        label.position.set(0, HALF, 0.001);
-        g.add(label);
-        // Sisi belakang label (untuk side face yang di-rotate Y=90°, normal ada di -X juga)
-        const labelBack = makeNumberSprite(number);
-        labelBack.position.set(0, HALF, -0.001);
-        labelBack.rotation.y = Math.PI;
-        g.add(labelBack);
-      }
-      return g;
-    }
-
-    // ===== Flat hierarchy: setiap face = child langsung cubeGroup =====
-    // Plane default di XY (lebar di X, tinggi di Y, normal +Z).
-    // Posisi face = pusat plane (bukan tepi/hinge).
-    // Setiap net mendefinisikan { pos, rot } per face untuk state unfolded;
-    // state folded sama untuk semua net (bentuk kubus utuh).
-
-    function makeFace(number) {
+    // ===== Flat hierarchy: setiap face = child langsung group kubus =====
+    // Plane default di XY (normal +Z). Posisi face = pusat plane.
+    function makeFace(number, fillMat, wireMat, haloMat) {
       const g = new THREE.Group();
       const fill = new THREE.Mesh(faceGeo, fillMat);
       g.add(fill);
@@ -310,25 +251,9 @@
         const label = makeNumberSprite(number);
         label.position.set(0, 0, 0.002);
         g.add(label);
-        // const labelBack = makeNumberSprite(number);
-        // labelBack.position.set(0, 0, -0.002);
-        // labelBack.rotation.y = Math.PI;
-        // g.add(labelBack);
       }
       return g;
     }
-
-    // 6 face dengan label angka sesuai dadu (top=1, bottom=6, dst).
-    // Disimpan di map agar bisa di-akses berdasarkan nama face.
-    const faceMeshes = {
-      bottom: makeFace(6),
-      top: makeFace(1),
-      front: makeFace(2),
-      back: makeFace(5),
-      right: makeFace(3),
-      left: makeFace(4),
-    };
-    for (const k in faceMeshes) cubeGroup.add(faceMeshes[k]);
 
     const PI2 = Math.PI / 2;
 
@@ -442,13 +367,12 @@
     const _vUnfold = new THREE.Vector3();
 
     // Interpolasi tiap face antara FOLDED (kubus utuh) dan NETS[currentNetIdx]
-    // (jaring-jaring datar). t=0 → kubus, t=1 → flat. Pakai SLERP untuk rotasi
-    // agar transisi tidak gimbal-flip dan LERP linear untuk posisi.
-    function setUnfold(t) {
+    // (jaring-jaring datar). t=0 → kubus, t=1 → flat.
+    function setUnfold(cube, t) {
       const a = THREE.MathUtils.clamp(t, 0, 1);
       const net = NETS[currentNetIdx];
-      for (const key of Object.keys(faceMeshes)) {
-        const mesh = faceMeshes[key];
+      for (const key of Object.keys(cube.faceMeshes)) {
+        const mesh = cube.faceMeshes[key];
         const f = FOLDED[key];
         const u = net[key];
         _vFold.fromArray(f.pos);
@@ -462,9 +386,91 @@
         mesh.quaternion.copy(_qOut);
       }
     }
-    setUnfold(0);
 
-    const glowMat = { opacity: 0, color: new THREE.Color(NEON_GLOW) };
+    // State enum (dipakai oleh factory & state machine)
+    const STATES = { IDLE: 'IDLE', SPAWNED: 'SPAWNED', GRABBED: 'GRABBED', UNFOLDED: 'UNFOLDED' };
+
+    // ---------------------------------------------------------------------
+    // [Cube Factory] — bikin satu kubus dengan group + material instance
+    // sendiri + state object sendiri. Warna grab/highlight tidak bocor antar
+    // kubus karena material per-cube.
+    // ---------------------------------------------------------------------
+    function createCube() {
+      const group = new THREE.Group();
+      group.visible = false;
+      scene.add(group);
+
+      const fillMat = new THREE.MeshBasicMaterial({
+        color: NEON_COLOR,
+        transparent: true,
+        opacity: 0.18,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const wireMat = new LineMaterial({
+        color: NEON_COLOR,
+        linewidth: 6,
+        transparent: true,
+        opacity: 1.0,
+        depthTest: true,
+        worldUnits: false,
+      });
+      wireMat.resolution.set(window.innerWidth, window.innerHeight);
+      const haloMat = new LineMaterial({
+        color: NEON_GLOW,
+        linewidth: 14,
+        transparent: true,
+        opacity: 0.35,
+        depthTest: true,
+        blending: THREE.AdditiveBlending,
+        worldUnits: false,
+      });
+      haloMat.resolution.set(window.innerWidth, window.innerHeight);
+
+      const faceMeshes = {
+        bottom: makeFace(6, fillMat, wireMat, haloMat),
+        top: makeFace(1, fillMat, wireMat, haloMat),
+        front: makeFace(2, fillMat, wireMat, haloMat),
+        back: makeFace(5, fillMat, wireMat, haloMat),
+        right: makeFace(3, fillMat, wireMat, haloMat),
+        left: makeFace(4, fillMat, wireMat, haloMat),
+      };
+      for (const k in faceMeshes) group.add(faceMeshes[k]);
+
+      const cube = {
+        group, faceMeshes, fillMat, wireMat, haloMat,
+        state: {
+          state: STATES.IDLE,
+          pos: new THREE.Vector3(0, 0, 0),
+          smoothPos: new THREE.Vector3(0, 0, 0),
+          hasSmooth: false,
+          scale: 0.001,
+          targetScale: 0.001,
+          fade: 0,
+          targetFade: 0,
+          grabHandIdx: -1,
+          grabFromState: null,
+          grabReleaseDebounceUntil: 0,
+          unfold: 0,
+          targetUnfold: 0,
+          spreadOpenFrames: 0,
+          rotateLastIndex: null,
+          rotateActive: false,
+          swipeDebounceUntil: 0,
+          thumbsLatched: false,
+          pinchBaseDist: 0,
+          pinchBaseScale: 1,
+          pinchActive: false,
+          highlight: 0,
+          spawnCooldownUntil: 0,
+        },
+      };
+      setUnfold(cube, 0);
+      return cube;
+    }
+
+    // Array semua kubus yang ada di scene. Mulai dengan 1 slot IDLE.
+    const cubes = [createCube()];
 
     function onResize() {
       const w = window.innerWidth;
@@ -472,8 +478,10 @@
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h, false);
-      wireMat.resolution.set(w, h);
-      haloMat.resolution.set(w, h);
+      for (const c of cubes) {
+        c.wireMat.resolution.set(w, h);
+        c.haloMat.resolution.set(w, h);
+      }
     }
     window.addEventListener('resize', onResize);
     onResize();
@@ -644,37 +652,7 @@
     // targetUnfold). Pola counter+threshold dipakai supaya gesture harus
     // konsisten beberapa frame baru memicu, mengurangi false positive.
     // ---------------------------------------------------------------------
-    const STATES = { IDLE: 'IDLE', SPAWNED: 'SPAWNED', GRABBED: 'GRABBED', UNFOLDED: 'UNFOLDED' };
-    const sm = {
-      state: STATES.IDLE,
-      pos: new THREE.Vector3(0, 0, 0),
-      smoothPos: new THREE.Vector3(0, 0, 0),
-      hasSmooth: false,
-      scale: 0.001,
-      targetScale: 0.001,
-      fade: 0,
-      targetFade: 0,
-      clapFramesClose: 0,
-      clapHoldUntil: 0,
-      clapDebounceUntil: 0,
-      lastClapPos: null,
-      grabHandIdx: -1,
-      grabFromState: null,
-      grabReleaseDebounceUntil: 0,
-      unfold: 0,
-      targetUnfold: 0,
-      spreadOpenFrames: 0,
-      rotateLastIndex: null,
-      rotateActive: false,
-      swipeStartX: null,
-      swipeStartTime: 0,
-      swipeDebounceUntil: 0,
-      thumbsLatched: false,
-      pinchBaseDist: 0,
-      pinchBaseScale: 1,
-      pinchActive: false,
-      highlight: 0,
-    };
+    // (STATES & cubes[] dideklarasi di atas factory createCube.)
 
     // Konstanta tuning gesture. Satuan:
     //   *_NORM  → koordinat MediaPipe ternormalisasi (0..1)
@@ -702,15 +680,29 @@
     const SCALE_SPEED = 8.0;
     const BOUND = 1.6;
 
-    function setState(next, hint) {
-      if (sm.state !== next) {
-        sm.state = next;
-        stateLabel.textContent = next;
+    function setState(cube, next, hint) {
+      if (cube.state.state !== next) {
+        cube.state.state = next;
       }
       if (hint !== undefined) {
         hintEl.textContent = hint;
         hintEl.style.opacity = '1';
       }
+    }
+
+    // Tampilkan state kubus paling "menarik" di HUD + jumlah aktif.
+    function refreshStateLabel() {
+      const priority = { UNFOLDED: 4, GRABBED: 3, SPAWNED: 2, IDLE: 1 };
+      let best = null;
+      let bestP = 0;
+      let active = 0;
+      for (const c of cubes) {
+        if (c.state.state !== STATES.IDLE) active++;
+        const p = priority[c.state.state] || 0;
+        if (p > bestP) { bestP = p; best = c.state.state; }
+      }
+      const label = best || 'IDLE';
+      stateLabel.textContent = active > 1 ? `${label} ×${active}` : label;
     }
 
     function flash() {
@@ -881,262 +873,435 @@
       handCtx.restore();
     }
 
-    // Inti state machine. Setiap blok if(sm.state === ...) menangani satu
-    // state dan boleh mengubah `sm.state` lewat setState() saat trigger
-    // gesture-nya muncul. Blok dieksekusi top-down per frame, jadi transisi
-    // ke state baru baru efektif di frame berikutnya.
+    // ---------------------------------------------------------------------
+    // Multi-cube state machine.
+    // Pre-pass: gesture global (clap, charge-fist spawn detection).
+    // Per-cube loop: SPAWNED/GRABBED/UNFOLDED logic. Hand claim untuk hindari
+    // konflik antar-kubus di frame yang sama.
+    // Post-pass: cleanup kubus IDLE dengan fade habis.
+    // ---------------------------------------------------------------------
+
+    // Global state untuk gesture yang bukan per-cube
+    const globalState = {
+      clapFramesClose: 0,
+      clapDebounceUntil: 0,
+      fistSpawnDebounceUntil: 0,
+      handFistTrack: {}, // key: 'Left'|'Right'
+    };
+
+    const FIST_CHARGE_MS = 1000;
+    const SPAWN_BLOCK_DIST = 0.55;        // kubus dianggap "dekat" jika dalam jarak ini
+    const FIST_SPAWN_AFTER_CLAP_MS = 1200;
+
+    function nearestCubeTo(pos, filterStates) {
+      let best = null;
+      let bestD = Infinity;
+      for (const c of cubes) {
+        if (filterStates && !filterStates.includes(c.state.state)) continue;
+        const d = c.state.smoothPos.distanceTo(pos);
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      return { cube: best, dist: bestD };
+    }
+
+    function spawnAt(world, hint) {
+      // Coba reuse slot IDLE yang sudah fade habis
+      let cube = cubes.find(c => c.state.state === STATES.IDLE && c.state.fade < 0.05);
+      if (!cube) {
+        cube = createCube();
+        cubes.push(cube);
+      }
+      const st = cube.state;
+      st.pos.copy(world);
+      st.smoothPos.copy(world);
+      st.hasSmooth = true;
+      st.scale = 0.001;
+      st.targetScale = 1.0;
+      st.targetFade = 1.0;
+      st.unfold = 0;
+      st.targetUnfold = 0;
+      cube.group.rotation.set(0, 0, 0);
+      setState(cube, STATES.SPAWNED, hint || ' ✊ genggam dekat kubus untuk memindahkan');
+      return cube;
+    }
+
+    function despawnCube(cube) {
+      setState(cube, STATES.IDLE);
+      cube.state.targetFade = 0;
+      cube.state.targetScale = 0.001;
+      cube.state.targetUnfold = 0;
+      cube.state.grabHandIdx = -1;
+    }
+
+    function cleanupDeadCubes() {
+      // Sisakan minimal 1 slot (untuk reuse)
+      for (let i = cubes.length - 1; i >= 0 && cubes.length > 1; i--) {
+        const c = cubes[i];
+        if (c.state.state === STATES.IDLE && c.state.fade < 0.01) {
+          scene.remove(c.group);
+          c.fillMat.dispose();
+          c.wireMat.dispose();
+          c.haloMat.dispose();
+          cubes.splice(i, 1);
+        }
+      }
+    }
+
     function tickStateMachine(now) {
       const hand1 = latestHands[0];
       const hand2 = latestHands[1];
 
-      // ----- Clap detection (butuh dua tangan, palm berdekatan) -----
+      // ===== PRE-PASS GLOBAL =====
+      // ----- Clap detection -----
       let clapTriggered = false;
       if (latestHands.length === 2) {
         const d = dist(hand1.palm, hand2.palm);
         if (d < CLAP_DIST_NORM) {
-          sm.clapFramesClose++;
+          globalState.clapFramesClose++;
         } else {
-          sm.clapFramesClose = 0;
+          globalState.clapFramesClose = 0;
         }
-        if (sm.clapFramesClose >= CLAP_FRAMES && now > sm.clapDebounceUntil) {
+        if (globalState.clapFramesClose >= CLAP_FRAMES && now > globalState.clapDebounceUntil) {
           clapTriggered = true;
-          sm.clapDebounceUntil = now + CLAP_DEBOUNCE_MS;
-          sm.clapFramesClose = 0;
+          globalState.clapDebounceUntil = now + CLAP_DEBOUNCE_MS;
+          globalState.fistSpawnDebounceUntil = now + FIST_SPAWN_AFTER_CLAP_MS;
+          globalState.clapFramesClose = 0;
           flash();
         }
       } else {
-        sm.clapFramesClose = 0;
+        globalState.clapFramesClose = 0;
       }
 
-      // Clap berperilaku berbeda tergantung state:
-      //  - IDLE  : spawn kubus di tengah dua tangan
-      //  - lainnya (SPAWNED/GRABBED/UNFOLDED): despawn kubus → kembali ke IDLE
-      if (clapTriggered) {
-        if (sm.state === STATES.IDLE && latestHands.length === 2) {
+      // Apakah ada kubus aktif (visible & bukan IDLE)?
+      let anyActive = false;
+      for (const c of cubes) {
+        if (c.state.state !== STATES.IDLE && c.state.fade > 0.05) { anyActive = true; break; }
+      }
+
+      // Clap behavior:
+      //  - tidak ada kubus aktif → spawn 1 kubus di tengah dua tangan
+      //  - ada kubus aktif → despawn semua
+      if (clapTriggered && latestHands.length === 2) {
+        if (!anyActive) {
           const mid = {
             x: (hand1.palm.x + hand2.palm.x) / 2,
             y: (hand1.palm.y + hand2.palm.y) / 2,
           };
           const world = landmarkToWorld(mid);
-          sm.pos.copy(world);
-          sm.smoothPos.copy(world);
-          sm.hasSmooth = true;
-          sm.scale = 0.001;
-          sm.targetScale = 1.0;
-          sm.targetFade = 1.0;
-          sm.unfold = 0;
-          sm.targetUnfold = 0;
           startBgm();
-          setState(STATES.SPAWNED, ' ✊ genggam dekat kubus untuk memindahkan');
+          spawnAt(world);
+        } else {
+          for (const c of cubes) despawnCube(c);
         }
       }
 
-      // ----- SPAWNED: cek grab -----
-      // Cari tangan dengan fist terdekat ke kubus. Jika dalam GRAB_DIST_WORLD
-      // → transisi ke GRABBED. nearestDist juga dipakai untuk highlight visual
-      // (kubus berkedip ungu saat tangan dekat = "ready to grab").
-      if (sm.state === STATES.SPAWNED) {
-        sm.targetFade = 1.0;
-        sm.targetUnfold = 0;   // di SPAWNED, kubus tetap dalam bentuk kubus
+      // Per-hand ownership (frame-local). Diisi di pre-pass (charge spawn)
+      // dan per-cube loop (grab/rotate/pinch claim).
+      const claimedFistHand = new Set();
+      const claimedRotateHand = new Set();
+      const claimedPinchHand = new Set();
 
-        let nearestDist = Infinity;
-        let nearestIdx = -1;
-        let fistNearIdx = -1;
-        for (let i = 0; i < latestHands.length; i++) {
-          const d = latestHands[i].palmWorld.distanceTo(sm.pos);
-          if (d < nearestDist) { nearestDist = d; nearestIdx = i; }
-          if (latestHands[i].isFist && d < GRAB_DIST_WORLD) {
-            fistNearIdx = i;
+      // ----- Charge-fist spawn detection -----
+      // User TAHAN kepalan di area kosong selama FIST_CHARGE_MS → spawn baru.
+      // Saat user fist DEKAT kubus existing → reset timer (user mau grab).
+      const seenLabels = new Set();
+      let anyCharging = false;
+      let chargeProgress = 0;
+      for (let hIdx = 0; hIdx < latestHands.length; hIdx++) {
+        const h = latestHands[hIdx];
+        const label = h.label;
+        seenLabels.add(label);
+        let track = globalState.handFistTrack[label];
+        if (!track) {
+          track = { wasFist: false, fistStart: 0, chargedAt: null, latched: false };
+          globalState.handFistTrack[label] = track;
+        }
+
+        if (h.isFist) {
+          if (!track.wasFist) {
+            track.fistStart = now;
+            track.latched = false;
+            track.chargedAt = h.palmWorld.clone();
           }
-        }
-        sm.highlight = (nearestIdx >= 0 && nearestDist < GRAB_DIST_WORLD) ? 1 : 0;
+          track.wasFist = true;
+          if (track.chargedAt) track.chargedAt.lerp(h.palmWorld, 0.3);
 
-        if (fistNearIdx >= 0) {
-          sm.grabHandIdx = fistNearIdx;
-          sm.grabFromState = STATES.SPAWNED;
-          setState(STATES.GRABBED, '✋ Buka tangan untuk melepaskan • genggam kedua tangan untuk membuka jaring');
-          sm.scale = 1.15;
-        }
-
-        // check thumbs up untuk despawn (alternatif selain clap)
-        if (latestHands.some(h => h.isThumbsUp)) {
-          setState(STATES.IDLE, '👍 Jempol terdeteksi, kubus akan dihapus');
+          if (!track.latched && now > globalState.fistSpawnDebounceUntil) {
+            const near = nearestCubeTo(h.palmWorld, [STATES.SPAWNED, STATES.GRABBED, STATES.UNFOLDED]);
+            const areaClear = !near.cube || near.dist > SPAWN_BLOCK_DIST;
+            if (areaClear) {
+              const heldMs = now - track.fistStart;
+              const progress = Math.min(1, heldMs / FIST_CHARGE_MS);
+              anyCharging = true;
+              chargeProgress = Math.max(chargeProgress, progress);
+              if (heldMs >= FIST_CHARGE_MS) {
+                const world = track.chargedAt.clone();
+                world.x = Math.max(-BOUND, Math.min(BOUND, world.x));
+                world.y = Math.max(-BOUND, Math.min(BOUND, world.y));
+                startBgm();
+                const newCube = spawnAt(world, '✨ Kubus baru dipanggil • buka tangan lalu ✊ untuk memindahkan');
+                // Cegah kubus baru langsung ter-grab di frame ini & beberapa
+                // frame berikutnya: user masih fist, posisi spawn = posisi
+                // tangan. Cooldown clear saat user pernah buka tangan.
+                newCube.state.spawnCooldownUntil = now + 1500;
+                claimedFistHand.add(hIdx);
+                track.latched = true;
+                flash();
+              }
+            } else {
+              // Ada kubus dekat → reset timer agar tidak menumpuk
+              track.fistStart = now;
+            }
+          }
+        } else {
+          track.wasFist = false;
+          track.latched = false;
+          track.chargedAt = null;
         }
       }
+      // Cleanup track untuk tangan yang sudah tidak terdeteksi
+      for (const k of Object.keys(globalState.handFistTrack)) {
+        if (!seenLabels.has(k)) delete globalState.handFistTrack[k];
+      }
 
-      // ----- GRABBED: ikuti tangan, atau spread untuk unfold -----
-      // Dua jalur:
-      //  (a) Trigger UNFOLD: butuh dua fist + jarak palm > SPREAD_DIST_NORM
-      //      konsisten selama SPREAD_FRAMES frame.
-      //  (b) Follow: kubus mengejar palm tangan menggenggam terdekat.
-      //      Kalau tidak ada fist dalam jangkauan & debounce lewat → release
-      //      kembali ke state asal (SPAWNED atau UNFOLDED).
-      if (sm.state === STATES.GRABBED) {
-        // Cek trigger dua-fist spread → UNFOLDED (hanya jika sedang grab dari kubus folded)
-        const canUnfoldFromGrab = sm.grabFromState === STATES.SPAWNED;
-        if (canUnfoldFromGrab && latestHands.length === 2 && hand1.isFist && hand2.isFist) {
-          const palmDist = dist(hand1.palm, hand2.palm);
-          if (palmDist > SPREAD_DIST_NORM) {
-            sm.spreadOpenFrames++;
-          } else {
-            sm.spreadOpenFrames = 0;
+      // ===== PER-CUBE LOOP =====
+      for (const cube of cubes) {
+        const st = cube.state;
+
+        // ----- SPAWNED -----
+        if (st.state === STATES.SPAWNED) {
+          st.targetFade = 1.0;
+          st.targetUnfold = 0;
+
+          // Spawn cooldown clear saat user pernah buka tangan
+          const anyFist = latestHands.some(h => h.isFist);
+          if (st.spawnCooldownUntil && (!anyFist || now > st.spawnCooldownUntil)) {
+            st.spawnCooldownUntil = 0;
           }
-        } else {
-          sm.spreadOpenFrames = 0;
-        }
-        if (sm.spreadOpenFrames >= SPREAD_FRAMES) {
-          sm.spreadOpenFrames = 0;
-          sm.targetUnfold = 1;
-          sm.grabHandIdx = -1;
-          playAudio(breakAudio);
-          setState(STATES.UNFOLDED, '🪧 Jaring-jaring kubus aktif. 👏 Tepuk untuk menghilangkan.');
-        } else {
-          // Follow tangan menggenggam terdekat
-          let best = -1;
-          let bestD = Infinity;
+          const inCooldown = st.spawnCooldownUntil && now <= st.spawnCooldownUntil;
+
+          let nearestDist = Infinity;
+          let fistNearIdx = -1;
           for (let i = 0; i < latestHands.length; i++) {
-            if (!latestHands[i].isFist) continue;
-            const d = latestHands[i].palmWorld.distanceTo(sm.smoothPos);
-            if (d < bestD) { bestD = d; best = i; }
+            if (claimedFistHand.has(i)) continue;
+            const d = latestHands[i].palmWorld.distanceTo(st.pos);
+            if (d < nearestDist) nearestDist = d;
+            if (!inCooldown && latestHands[i].isFist && d < GRAB_DIST_WORLD) {
+              fistNearIdx = i;
+            }
           }
-          if (best >= 0 && bestD < GRAB_DIST_WORLD * 2.0) {
-            const target = latestHands[best].palmWorld;
-            target.x = Math.max(-BOUND, Math.min(BOUND, target.x));
-            target.y = Math.max(-BOUND, Math.min(BOUND, target.y));
-            sm.pos.copy(target);
-            sm.grabReleaseDebounceUntil = now + RELEASE_DEBOUNCE_MS;
-          } else if (now > sm.grabReleaseDebounceUntil) {
-            sm.grabHandIdx = -1;
-            const back = sm.grabFromState === STATES.UNFOLDED ? STATES.UNFOLDED : STATES.SPAWNED;
-            setState(back, '✊ Genggam dekat kubus untuk mengambilnya lagi');
-          }
-        }
-        sm.highlight = 1;
-      }
+          st.highlight = (nearestDist < GRAB_DIST_WORLD) ? 1 : 0;
 
-      // ----- Pinch resize (aktif saat SPAWNED atau UNFOLDED): jarak antar dua telunjuk = skala
-      if (sm.state === STATES.SPAWNED || sm.state === STATES.UNFOLDED) {
-        const pointingHands = latestHands.filter(h => h.isPointing);
-        if (pointingHands.length >= 2) {
-          const a = pointingHands[0].indexTipWorld;
-          const b = pointingHands[1].indexTipWorld;
-          const d = a.distanceTo(b);
-          if (!sm.pinchActive) {
-            sm.pinchBaseDist = Math.max(d, 0.05);
-            sm.pinchBaseScale = sm.targetScale;
-            sm.pinchActive = true;
-          } else {
-            const ratio = d / sm.pinchBaseDist;
-            sm.targetScale = Math.max(PINCH_SCALE_MIN, Math.min(PINCH_SCALE_MAX, sm.pinchBaseScale * ratio));
+          if (fistNearIdx >= 0) {
+            st.grabHandIdx = fistNearIdx;
+            st.grabFromState = STATES.SPAWNED;
+            claimedFistHand.add(fistNearIdx);
+            setState(cube, STATES.GRABBED, '✋ Buka tangan untuk melepaskan • genggam kedua tangan untuk membuka jaring');
+            st.scale = 1.15;
           }
-          sm.highlight = 1;
-        } else {
-          sm.pinchActive = false;
-        }
-      } else {
-        sm.pinchActive = false;
-      }
 
-      // ----- Rotasi two-finger (aktif di SPAWNED & UNFOLDED) -----
-      // Telunjuk + jari tengah dirapatkan dekat kubus → drag = rotasi
-      // cubeGroup di sumbu X & Y. Pivot diambil dari rata-rata posisi ujung
-      // telunjuk dan tengah. Skip kalau sedang pinch resize.
-      if (sm.state === STATES.SPAWNED || sm.state === STATES.UNFOLDED) {
-        let rotateHand = null;
-        let rotatePivot = null;
-        if (!sm.pinchActive) {
+          // Thumbs-up dekat kubus → despawn KUBUS INI (despawn-terdekat)
+          let thumbsNear = false;
           for (const h of latestHands) {
-            if (!h.isTwoFingerRotate) continue;
-            const pivot = h.indexTipWorld.clone().add(h.middleTipWorld).multiplyScalar(0.5);
-            const d = pivot.distanceTo(sm.smoothPos);
-            if (d < ROTATE_TOUCH_DIST) { rotateHand = h; rotatePivot = pivot; break; }
+            if (!h.isThumbsUp) continue;
+            if (h.palmWorld.distanceTo(st.pos) < GRAB_DIST_WORLD * 2.0) { thumbsNear = true; break; }
           }
-        }
-        if (rotateHand && rotatePivot) {
-          if (sm.rotateLastIndex && sm.rotateActive) {
-            const dx = rotatePivot.x - sm.rotateLastIndex.x;
-            const dy = rotatePivot.y - sm.rotateLastIndex.y;
-            cubeGroup.rotation.y += dx * ROTATE_SENSITIVITY;
-            cubeGroup.rotation.x += -dy * ROTATE_SENSITIVITY;
-          }
-          sm.rotateLastIndex = rotatePivot.clone();
-          sm.rotateActive = true;
-          sm.highlight = 1;
-        } else {
-          sm.rotateActive = false;
-          sm.rotateLastIndex = null;
-        }
-      } else {
-        sm.rotateActive = false;
-        sm.rotateLastIndex = null;
-      }
-
-      // ----- UNFOLDED: jaring-jaring aktif, tunggu clap untuk despawn -----
-      // Beberapa interaksi paralel di state ini:
-      //  • Re-grab fist (tanpa pointing) → GRABBED.
-      //  • Thumbs-up (sekali per gesture, via thumbsLatched) → cycle pola NET.
-      //  • Fist + pointing dengan jarak palm besar → fold balik ke SPAWNED.
-      if (sm.state === STATES.UNFOLDED) {
-        sm.targetFade = 1.0;
-        sm.targetUnfold = 1;
-
-        // Grab dari UNFOLDED: fist dekat kubus, dan tidak ada tangan lain pointing
-        // (agar tidak konflik dengan trigger fold-balik yang butuh fist+pointing)
-        const anyPointing = latestHands.some(h => h.isPointing);
-        if (!anyPointing) {
-          let fistNearIdxU = -1;
-          for (let i = 0; i < latestHands.length; i++) {
-            if (!latestHands[i].isFist) continue;
-            const d = latestHands[i].palmWorld.distanceTo(sm.smoothPos);
-            if (d < GRAB_DIST_WORLD) { fistNearIdxU = i; break; }
-          }
-          if (fistNearIdxU >= 0) {
-            sm.grabHandIdx = fistNearIdxU;
-            sm.grabFromState = STATES.UNFOLDED;
-            setState(STATES.GRABBED, '✋ Buka tangan untuk melepaskan');
+          if (thumbsNear) {
+            despawnCube(cube);
+            hintEl.textContent = '👍 Kubus dihapus';
+            hintEl.style.opacity = '1';
           }
         }
 
-        // 👍 Thumbs up terdeteksi → cycle ke pola jaring-jaring berikutnya.
-        // Pakai debounce agar tidak men-trigger berulang selama gesture aktif;
-        // butuh thumbsup hilang dulu sebelum bisa trigger lagi (tracked via flag).
-        const thumbsHand = latestHands.find(h => h.isThumbsUp) || null;
-        if (thumbsHand && !sm.thumbsLatched && now > sm.swipeDebounceUntil) {
-          currentNetIdx = (currentNetIdx + 1) % NETS.length;
-          sm.swipeDebounceUntil = now + SWIPE_DEBOUNCE_MS;
-          sm.thumbsLatched = true;
-          netLabel.textContent = NETS[currentNetIdx].name;
-          hintEl.textContent = `🔀 Pola: ${NETS[currentNetIdx].name}`;
-        } else if (!thumbsHand) {
-          sm.thumbsLatched = false;
-        }
-
-        if (latestHands.length === 2 && ((hand1.isPointing && hand2.isFist) || (hand1.isFist && hand2.isPointing))) {
-          const palmDist = dist(hand1.palm, hand2.palm);
-          if (palmDist > SPREAD_DIST_NORM) {
-            sm.spreadOpenFrames++;
+        // ----- GRABBED -----
+        if (st.state === STATES.GRABBED) {
+          const canUnfoldFromGrab = st.grabFromState === STATES.SPAWNED;
+          if (canUnfoldFromGrab && latestHands.length === 2 && hand1.isFist && hand2.isFist) {
+            const palmDist = dist(hand1.palm, hand2.palm);
+            if (palmDist > SPREAD_DIST_NORM) {
+              st.spreadOpenFrames++;
+            } else {
+              st.spreadOpenFrames = 0;
+            }
           } else {
-            sm.spreadOpenFrames = 0;
+            st.spreadOpenFrames = 0;
+          }
+          if (st.spreadOpenFrames >= SPREAD_FRAMES) {
+            st.spreadOpenFrames = 0;
+            st.targetUnfold = 1;
+            st.grabHandIdx = -1;
+            playAudio(breakAudio);
+            setState(cube, STATES.UNFOLDED, '🪧 Jaring-jaring aktif. ✊✊ Dua kepal & rentangkan untuk melipat balik.');
+          } else {
+            let best = -1;
+            let bestD = Infinity;
+            for (let i = 0; i < latestHands.length; i++) {
+              if (claimedFistHand.has(i) && i !== st.grabHandIdx) continue;
+              if (!latestHands[i].isFist) continue;
+              const d = latestHands[i].palmWorld.distanceTo(st.smoothPos);
+              if (d < bestD) { bestD = d; best = i; }
+            }
+            if (best >= 0 && bestD < GRAB_DIST_WORLD * 2.0) {
+              claimedFistHand.add(best);
+              const target = latestHands[best].palmWorld;
+              target.x = Math.max(-BOUND, Math.min(BOUND, target.x));
+              target.y = Math.max(-BOUND, Math.min(BOUND, target.y));
+              st.pos.copy(target);
+              st.grabReleaseDebounceUntil = now + RELEASE_DEBOUNCE_MS;
+            } else if (now > st.grabReleaseDebounceUntil) {
+              st.grabHandIdx = -1;
+              const back = st.grabFromState === STATES.UNFOLDED ? STATES.UNFOLDED : STATES.SPAWNED;
+              setState(cube, back, '✊ Genggam dekat kubus untuk mengambilnya lagi');
+            }
+          }
+          st.highlight = 1;
+        }
+
+        // ----- UNFOLDED -----
+        if (st.state === STATES.UNFOLDED) {
+          st.targetFade = 1.0;
+          st.targetUnfold = 1;
+
+          // Re-grab: fist dekat kubus, kecuali ada 2 fist (itu untuk fold-back)
+          const fistCount = latestHands.reduce((n, h) => n + (h.isFist ? 1 : 0), 0);
+          if (fistCount < 2) {
+            let fistNearIdxU = -1;
+            for (let i = 0; i < latestHands.length; i++) {
+              if (claimedFistHand.has(i)) continue;
+              if (!latestHands[i].isFist) continue;
+              const d = latestHands[i].palmWorld.distanceTo(st.smoothPos);
+              if (d < GRAB_DIST_WORLD) { fistNearIdxU = i; break; }
+            }
+            if (fistNearIdxU >= 0) {
+              st.grabHandIdx = fistNearIdxU;
+              st.grabFromState = STATES.UNFOLDED;
+              claimedFistHand.add(fistNearIdxU);
+              setState(cube, STATES.GRABBED, '✋ Buka tangan untuk melepaskan');
+            }
+          }
+
+          // Thumbs-up di UNFOLDED → cycle net pattern (global)
+          const thumbsHand = latestHands.find(h => h.isThumbsUp) || null;
+          if (thumbsHand && !st.thumbsLatched && now > st.swipeDebounceUntil) {
+            currentNetIdx = (currentNetIdx + 1) % NETS.length;
+            st.swipeDebounceUntil = now + SWIPE_DEBOUNCE_MS;
+            st.thumbsLatched = true;
+            netLabel.textContent = NETS[currentNetIdx].name;
+            hintEl.textContent = `🔀 Pola: ${NETS[currentNetIdx].name}`;
+          } else if (!thumbsHand) {
+            st.thumbsLatched = false;
+          }
+
+          // Fold-back: dua fist + spread
+          if (latestHands.length === 2 && hand1.isFist && hand2.isFist) {
+            const palmDist = dist(hand1.palm, hand2.palm);
+            if (palmDist > SPREAD_DIST_NORM) {
+              st.spreadOpenFrames++;
+            } else {
+              st.spreadOpenFrames = 0;
+            }
+          } else {
+            st.spreadOpenFrames = 0;
+          }
+          if (st.spreadOpenFrames >= SPREAD_FRAMES) {
+            st.spreadOpenFrames = 0;
+            st.targetUnfold = 0;
+            st.grabHandIdx = -1;
+            playAudio(buildingAudio);
+            setState(cube, STATES.SPAWNED, '🪧 Kubus terlipat kembali. 👏 Tepuk untuk menghilangkan semua.');
+          }
+        }
+
+        // ----- Pinch resize per-kubus -----
+        if (st.state === STATES.SPAWNED || st.state === STATES.UNFOLDED) {
+          const pointIdx = [];
+          for (let i = 0; i < latestHands.length; i++) {
+            if (!latestHands[i].isPointing) continue;
+            if (claimedPinchHand.has(i)) continue;
+            pointIdx.push(i);
+          }
+          if (pointIdx.length >= 2) {
+            const a = latestHands[pointIdx[0]].indexTipWorld;
+            const b = latestHands[pointIdx[1]].indexTipWorld;
+            const mid = a.clone().add(b).multiplyScalar(0.5);
+            if (mid.distanceTo(st.smoothPos) < ROTATE_TOUCH_DIST * 1.5) {
+              const d = a.distanceTo(b);
+              if (!st.pinchActive) {
+                st.pinchBaseDist = Math.max(d, 0.05);
+                st.pinchBaseScale = st.targetScale;
+                st.pinchActive = true;
+              } else {
+                const ratio = d / st.pinchBaseDist;
+                st.targetScale = Math.max(PINCH_SCALE_MIN, Math.min(PINCH_SCALE_MAX, st.pinchBaseScale * ratio));
+              }
+              claimedPinchHand.add(pointIdx[0]);
+              claimedPinchHand.add(pointIdx[1]);
+              st.highlight = 1;
+            } else {
+              st.pinchActive = false;
+            }
+          } else {
+            st.pinchActive = false;
           }
         } else {
-          sm.spreadOpenFrames = 0;
+          st.pinchActive = false;
         }
-        if (sm.spreadOpenFrames >= SPREAD_FRAMES) {
-          sm.spreadOpenFrames = 0;
-          sm.targetUnfold = 0;
-          sm.grabHandIdx = -1;
-          playAudio(buildingAudio);
-          setState(STATES.SPAWNED, '🪧 Jaring-jaring kubus aktif. 👏 Tepuk untuk menghilangkan.');
+
+        // ----- Rotasi two-finger per-kubus -----
+        if (st.state === STATES.SPAWNED || st.state === STATES.UNFOLDED) {
+          let rotateHandIdx = -1;
+          let rotatePivot = null;
+          if (!st.pinchActive) {
+            for (let i = 0; i < latestHands.length; i++) {
+              if (claimedRotateHand.has(i)) continue;
+              const h = latestHands[i];
+              if (!h.isTwoFingerRotate) continue;
+              const pivot = h.indexTipWorld.clone().add(h.middleTipWorld).multiplyScalar(0.5);
+              const d = pivot.distanceTo(st.smoothPos);
+              if (d < ROTATE_TOUCH_DIST) { rotateHandIdx = i; rotatePivot = pivot; break; }
+            }
+          }
+          if (rotateHandIdx >= 0 && rotatePivot) {
+            if (st.rotateLastIndex && st.rotateActive) {
+              const dx = rotatePivot.x - st.rotateLastIndex.x;
+              const dy = rotatePivot.y - st.rotateLastIndex.y;
+              cube.group.rotation.y += dx * ROTATE_SENSITIVITY;
+              cube.group.rotation.x += -dy * ROTATE_SENSITIVITY;
+            }
+            st.rotateLastIndex = rotatePivot.clone();
+            st.rotateActive = true;
+            st.highlight = 1;
+            claimedRotateHand.add(rotateHandIdx);
+          } else {
+            st.rotateActive = false;
+            st.rotateLastIndex = null;
+          }
+        } else {
+          st.rotateActive = false;
+          st.rotateLastIndex = null;
+        }
+
+        // ----- IDLE: fade out -----
+        if (st.state === STATES.IDLE) {
+          st.targetFade = 0;
+          st.targetScale = 0.001;
+          st.targetUnfold = 0;
         }
       }
 
-      // ----- Idle hint default -----
-      if (sm.state === STATES.IDLE) {
-        sm.targetFade = 0;
-        sm.targetScale = 0.001;
-        sm.targetUnfold = 0;
-        hintEl.textContent = '👏 Tepuk tangan untuk memunculkan kubus';
+      // ===== POST-PASS =====
+      if (anyCharging) {
+        const pct = Math.round(chargeProgress * 100);
+        const filled = Math.round(chargeProgress * 10);
+        const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
+        hintEl.textContent = `✊ Menahan kepalan… ${bar} ${pct}%`;
+        hintEl.style.opacity = '1';
+      } else if (!anyActive && !clapTriggered) {
+        hintEl.textContent = '👏 Tepuk tangan untuk memunculkan kubus  •  ✊ tahan kepalan ~1.0 detik di area kosong untuk panggil kubus baru';
       }
+
+      cleanupDeadCubes();
+      refreshStateLabel();
     }
 
     // Render loop utama. Semua animasi & feedback visual (warna neon,
@@ -1156,54 +1321,46 @@
       updateHud();
       tickStateMachine(now);
 
-      // Smoothing posisi
-      if (sm.hasSmooth) {
-        sm.smoothPos.lerp(sm.pos, SMOOTHING);
-      }
+      // Apply per-kubus: smoothing, fade, scale, unfold, transform, material.
+      for (const cube of cubes) {
+        const st = cube.state;
 
-      // Fade & scale lerp
-      sm.fade += (sm.targetFade - sm.fade) * Math.min(1, (sm.targetFade > sm.fade ? FADE_IN_SPEED : FADE_OUT_SPEED) * dt);
-      sm.scale += (sm.targetScale - sm.scale) * Math.min(1, SCALE_SPEED * dt);
+        if (st.hasSmooth) {
+          st.smoothPos.lerp(st.pos, SMOOTHING);
+        }
 
-      // Unfold lerp + apply ke hierarchy face
-      sm.unfold += (sm.targetUnfold - sm.unfold) * Math.min(1, UNFOLD_SPEED * dt);
-      const easedUnfold = sm.unfold < 0.001 ? 0 : (sm.unfold > 0.999 ? 1 : sm.unfold);
-      setUnfold(easedUnfold);
+        st.fade += (st.targetFade - st.fade) * Math.min(1, (st.targetFade > st.fade ? FADE_IN_SPEED : FADE_OUT_SPEED) * dt);
+        st.scale += (st.targetScale - st.scale) * Math.min(1, SCALE_SPEED * dt);
 
-      const visible = sm.fade > 0.01;
-      cubeGroup.visible = visible;
-      if (visible) {
-        cubeGroup.position.copy(sm.smoothPos);
-        cubeGroup.scale.setScalar(sm.scale);
-        // Auto-rotate hanya saat masih bentuk kubus; freeze saat unfolded.
-        // Auto-rotate freeze saat unfolded atau saat user rotate manual.
-        const spinFactor = (1 - sm.unfold) * (sm.rotateActive ? 0 : 1);
-        cubeGroup.rotation.y += dt * 0.5 * spinFactor;
+        st.unfold += (st.targetUnfold - st.unfold) * Math.min(1, UNFOLD_SPEED * dt);
+        const easedUnfold = st.unfold < 0.001 ? 0 : (st.unfold > 0.999 ? 1 : st.unfold);
+        setUnfold(cube, easedUnfold);
 
-        fillMat.opacity = 0.18 * sm.fade;
-        wireMat.opacity = 1.0 * sm.fade;
-        haloMat.opacity = 0.4 * sm.fade;
+        const visible = st.fade > 0.01;
+        cube.group.visible = visible;
+        if (visible) {
+          cube.group.position.copy(st.smoothPos);
+          cube.group.scale.setScalar(st.scale);
+          const spinFactor = (1 - st.unfold) * (st.rotateActive ? 0 : 1);
+          cube.group.rotation.y += dt * 0.5 * spinFactor;
 
-        // glow naik saat ready-to-grab / grabbed / unfolded
-        const isInteracting = sm.state === STATES.GRABBED || sm.state === STATES.UNFOLDED;
-        const glowTarget = (isInteracting ? 0.4 : (sm.highlight ? 0.22 : 0.1)) * sm.fade;
-        glowMat.opacity += (glowTarget - glowMat.opacity) * Math.min(1, 6 * dt);
+          cube.fillMat.opacity = 0.18 * st.fade;
+          cube.wireMat.opacity = 1.0 * st.fade;
+          cube.haloMat.opacity = 0.4 * st.fade;
 
-        // warna neon berubah sesuai state
-        const targetColor = sm.state === STATES.UNFOLDED
-          ? 0x9d4dff                   // neon purple saat jaring-jaring
-          : (sm.state === STATES.GRABBED
-            ? NEON_GRAB
-            : (sm.highlight ? NEON_HIGHLIGHT : NEON_COLOR));
-        const targetCol = new THREE.Color(targetColor);
-        wireMat.color.lerp(targetCol, Math.min(1, 6 * dt));
-        fillMat.color.lerp(targetCol, Math.min(1, 6 * dt));
-        haloMat.color.lerp(targetCol, Math.min(1, 6 * dt));
-        glowMat.color.lerp(targetCol, Math.min(1, 6 * dt));
+          const targetColor = st.state === STATES.UNFOLDED
+            ? 0x9d4dff
+            : (st.state === STATES.GRABBED
+              ? NEON_GRAB
+              : (st.highlight ? NEON_HIGHLIGHT : NEON_COLOR));
+          const targetCol = new THREE.Color(targetColor);
+          cube.wireMat.color.lerp(targetCol, Math.min(1, 6 * dt));
+          cube.fillMat.color.lerp(targetCol, Math.min(1, 6 * dt));
+          cube.haloMat.color.lerp(targetCol, Math.min(1, 6 * dt));
 
-        // pulse halus pada ketebalan halo
-        const pulse = 1 + Math.sin(now * 0.005) * 0.15;
-        haloMat.linewidth = 14 * pulse;
+          const pulse = 1 + Math.sin(now * 0.005) * 0.15;
+          cube.haloMat.linewidth = 14 * pulse;
+        }
       }
 
       renderer.render(scene, camera);
@@ -1226,7 +1383,7 @@
       hands.setOptions({
         maxNumHands: 2,
         modelComplexity: 0,
-        minDetectionConfidence: 0.6,
+        minDetectionConfidence: 0.9,
         minTrackingConfidence: 0.5,
       });
       hands.onResults(onResults);
