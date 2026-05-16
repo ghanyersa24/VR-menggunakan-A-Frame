@@ -36,6 +36,21 @@
       pointer-events: none;
     }
 
+    #hand-canvas {
+      /* Dimensi canvas = frame video, lalu di-scale & mirror via CSS sama
+         persis dengan video element di belakangnya. Landmark MediaPipe
+         (0..1) langsung 1:1 dengan pixel canvas — tanpa konversi manual. */
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      transform: scaleX(-1);
+      z-index: var(--z-hand);
+      pointer-events: none;
+    }
+
     /* ---------- Page-specific: white flash effect ---------- */
     #flash {
       position: absolute;
@@ -52,6 +67,7 @@
   <div id="container">
     <video id="video" playsinline autoplay muted></video>
     <canvas id="three-canvas"></canvas>
+    <canvas id="hand-canvas"></canvas>
     <div id="flash"></div>
 
     <div id="hud">
@@ -93,6 +109,8 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js"
     crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"
+    crossorigin="anonymous"></script>
 
   <script type="module">
     /* =====================================================================
@@ -132,6 +150,8 @@
     // ---------------------------------------------------------------------
     const videoEl = document.getElementById('video');
     const canvasEl = document.getElementById('three-canvas');
+    const handCanvas = document.getElementById('hand-canvas');
+    const handCtx = handCanvas.getContext('2d');
     const stateLabel = document.getElementById('state-label');
     const netLabel = document.getElementById('net-label');
     const handsCountEl = document.getElementById('hands-count');
@@ -549,6 +569,10 @@
     }
 
     function isPointing(lm) {
+      // Exclusive dari two-finger rotate: kalau jari tengah juga extended &
+      // dirapatkan ke telunjuk, ini gesture rotate, bukan pointing.
+      if (isTwoFingerRotate(lm)) return false;
+
       const wrist = lm[0];
 
       // index finger (telunjuk)
@@ -575,6 +599,30 @@
       const othersFolded = folded >= 2;
 
       return indexExtended && othersFolded;
+    }
+
+    // Two-finger rotate gesture: telunjuk + jari tengah keduanya extended
+    // dan UJUNGNYA berdekatan (rapat), sementara ring & pinky terlipat.
+    function isTwoFingerRotate(lm) {
+      const wrist = lm[0];
+      const indexTip = lm[8], indexMcp = lm[5];
+      const middleTip = lm[12], middleMcp = lm[9];
+      const ringTip = lm[16], ringMcp = lm[13];
+      const pinkyTip = lm[20], pinkyMcp = lm[17];
+
+      const indexExtended = dist(indexTip, wrist) > dist(indexMcp, wrist) * 1.15;
+      const middleExtended = dist(middleTip, wrist) > dist(middleMcp, wrist) * 1.15;
+      if (!indexExtended || !middleExtended) return false;
+
+      const ringFolded = dist(ringTip, wrist) < dist(ringMcp, wrist) * 1.2;
+      const pinkyFolded = dist(pinkyTip, wrist) < dist(pinkyMcp, wrist) * 1.2;
+      if (!ringFolded || !pinkyFolded) return false;
+
+      // Telunjuk & tengah harus RAPAT (tip-to-tip). Threshold relatif ke
+      // panjang telunjuk biar tahan jarak tangan ke kamera.
+      const indexLen = dist(indexTip, indexMcp);
+      const tipGap = dist(indexTip, middleTip);
+      return tipGap < indexLen * 0.7;
     }
     // Konversi titik landmark (NDC 0..1, dengan x mirror karena video
     // di-flip horizontally via CSS) → posisi dunia 3D pada kedalaman tetap.
@@ -698,9 +746,11 @@
             palm,
             palmWorld: landmarkToWorld(palm),
             indexTipWorld: landmarkToWorld(lm[8]),
+            middleTipWorld: landmarkToWorld(lm[12]),
             isFist: isClosedFist(lm),
             isOpen: isOpenHand(lm),
             isThumbsUp: isThumbsUp(lm),
+            isTwoFingerRotate: isTwoFingerRotate(lm),
             isPointing: isPointing(lm),
           });
         }
@@ -721,6 +771,44 @@
     let lastFrame = performance.now();
     let fpsAccum = 0, fpsCount = 0;
 
+    // ===== Audio FX =====
+    // Pre-load assets/break.mp3 (unfold) dan assets/building.mp3 (fold).
+    // Playback diizinkan karena getUserMedia() di awal halaman sudah jadi
+    // user-gesture unlock untuk media playback.
+    const breakAudio = new Audio('assets/break.mp3');
+    const buildingAudio = new Audio('assets/building.mp3');
+    breakAudio.preload = 'auto';
+    buildingAudio.preload = 'auto';
+    breakAudio.volume = 0.9;
+    buildingAudio.volume = 0.9;
+
+    // BGM futuristic — looped, volume rendah. Start ditunda hingga kubus
+    // pertama spawn (clap atau charge-fist) agar terasa "menyala bersama
+    // dunia AR" alih-alih bergema sebelum user berinteraksi.
+    const bgmAudio = new Audio('assets/futuristic.mp3');
+    bgmAudio.preload = 'auto';
+    bgmAudio.loop = true;
+    bgmAudio.volume = 0.25;
+    let bgmStarted = false;
+    function startBgm() {
+      if (bgmStarted) return;
+      bgmStarted = true;
+      const p = bgmAudio.play();
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => { bgmStarted = false; }); // retry next call
+      }
+    }
+
+    function playAudio(el) {
+      try {
+        el.currentTime = 0;
+        const p = el.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } catch (e) {
+        console.warn('audio play failed', e);
+      }
+    }
+
     function updateHud() {
       handsCountEl.textContent = String(latestHands.length);
       handsCountEl.className = latestHands.length > 0 ? 'ok' : 'muted';
@@ -730,6 +818,7 @@
         if (h.isFist) return ['Menggenggam ✊', 'hot'];
         if (h.isOpen) return ['Terbuka ✋', 'ok'];
         if (h.isThumbsUp) return ['Jempol ke Atas 👍', 'ok'];
+        if (h.isTwoFingerRotate) return ['Putar ✌️', 'ok'];
         if (h.isPointing) return ['Menunjuk 👉', 'ok'];
         return ['Netral', 'warn'];
       };
@@ -742,6 +831,54 @@
       gestureLEl.className = lc;
       gestureREl.textContent = rt;
       gestureREl.className = rc;
+    }
+
+    // ---------------------------------------------------------------------
+    // [Hand Skeleton Overlay] — gambar skeleton tangan di atas video feed.
+    // Canvas berukuran = videoWidth × videoHeight (frame native). Landmark
+    // MediaPipe (0..1) langsung 1:1 dengan pixel canvas — tidak butuh
+    // konversi manual. CSS object-fit:cover + scaleX(-1) menscale+mirror
+    // canvas sama persis seperti video di belakangnya.
+    //
+    // drawConnectors & drawLandmarks dari @mediapipe/drawing_utils (global).
+    // HAND_CONNECTIONS juga global dari hands.js.
+    // ---------------------------------------------------------------------
+    function drawHandSkeleton() {
+      if (!videoEl.videoWidth || !videoEl.videoHeight) return;
+      if (handCanvas.width !== videoEl.videoWidth) {
+        handCanvas.width = videoEl.videoWidth;
+        handCanvas.height = videoEl.videoHeight;
+      }
+      handCtx.save();
+      handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+      if (!latestHands.length) {
+        handCtx.restore();
+        return;
+      }
+
+      for (const hand of latestHands) {
+        // Warna berdasar gesture aktif (feedback visual)
+        let boneColor = '#00d4ff';                              // cyan default
+        if (hand.isFist) boneColor = '#f97316';                 // orange grab
+        else if (hand.isTwoFingerRotate) boneColor = '#a78bfa'; // purple rotate
+        else if (hand.isThumbsUp) boneColor = '#fbbf24';        // amber thumb
+        else if (hand.isPointing) boneColor = '#4ade80';        // green pointing
+
+        handCtx.save();
+        handCtx.shadowBlur = 10;
+        handCtx.shadowColor = boneColor;
+        drawConnectors(handCtx, hand.lm, HAND_CONNECTIONS, {
+          color: boneColor,
+          lineWidth: 3,
+        });
+        drawLandmarks(handCtx, hand.lm, {
+          color: '#ffffff',
+          lineWidth: 1,
+          radius: 2,
+        });
+        handCtx.restore();
+      }
+      handCtx.restore();
     }
 
     // Inti state machine. Setiap blok if(sm.state === ...) menangani satu
@@ -789,6 +926,7 @@
           sm.targetFade = 1.0;
           sm.unfold = 0;
           sm.targetUnfold = 0;
+          startBgm();
           setState(STATES.SPAWNED, ' ✊ genggam dekat kubus untuk memindahkan');
         }
       }
@@ -850,6 +988,7 @@
           sm.spreadOpenFrames = 0;
           sm.targetUnfold = 1;
           sm.grabHandIdx = -1;
+          playAudio(breakAudio);
           setState(STATES.UNFOLDED, '🪧 Jaring-jaring kubus aktif. 👏 Tepuk untuk menghilangkan.');
         } else {
           // Follow tangan menggenggam terdekat
@@ -898,10 +1037,43 @@
         sm.pinchActive = false;
       }
 
+      // ----- Rotasi two-finger (aktif di SPAWNED & UNFOLDED) -----
+      // Telunjuk + jari tengah dirapatkan dekat kubus → drag = rotasi
+      // cubeGroup di sumbu X & Y. Pivot diambil dari rata-rata posisi ujung
+      // telunjuk dan tengah. Skip kalau sedang pinch resize.
+      if (sm.state === STATES.SPAWNED || sm.state === STATES.UNFOLDED) {
+        let rotateHand = null;
+        let rotatePivot = null;
+        if (!sm.pinchActive) {
+          for (const h of latestHands) {
+            if (!h.isTwoFingerRotate) continue;
+            const pivot = h.indexTipWorld.clone().add(h.middleTipWorld).multiplyScalar(0.5);
+            const d = pivot.distanceTo(sm.smoothPos);
+            if (d < ROTATE_TOUCH_DIST) { rotateHand = h; rotatePivot = pivot; break; }
+          }
+        }
+        if (rotateHand && rotatePivot) {
+          if (sm.rotateLastIndex && sm.rotateActive) {
+            const dx = rotatePivot.x - sm.rotateLastIndex.x;
+            const dy = rotatePivot.y - sm.rotateLastIndex.y;
+            cubeGroup.rotation.y += dx * ROTATE_SENSITIVITY;
+            cubeGroup.rotation.x += -dy * ROTATE_SENSITIVITY;
+          }
+          sm.rotateLastIndex = rotatePivot.clone();
+          sm.rotateActive = true;
+          sm.highlight = 1;
+        } else {
+          sm.rotateActive = false;
+          sm.rotateLastIndex = null;
+        }
+      } else {
+        sm.rotateActive = false;
+        sm.rotateLastIndex = null;
+      }
+
       // ----- UNFOLDED: jaring-jaring aktif, tunggu clap untuk despawn -----
       // Beberapa interaksi paralel di state ini:
       //  • Re-grab fist (tanpa pointing) → GRABBED.
-      //  • Telunjuk dekat kubus → drag rotasi cubeGroup di sumbu X & Y.
       //  • Thumbs-up (sekali per gesture, via thumbsLatched) → cycle pola NET.
       //  • Fist + pointing dengan jarak palm besar → fold balik ke SPAWNED.
       if (sm.state === STATES.UNFOLDED) {
@@ -923,30 +1095,6 @@
             sm.grabFromState = STATES.UNFOLDED;
             setState(STATES.GRABBED, '✋ Buka tangan untuk melepaskan');
           }
-        }
-
-        // Rotasi via satu telunjuk menyentuh kubus (skip kalau sedang pinch resize)
-        let touchHand = null;
-        if (!sm.pinchActive) {
-          for (const h of latestHands) {
-            if (!h.isPointing) continue;
-            const d = h.indexTipWorld.distanceTo(sm.smoothPos);
-            if (d < ROTATE_TOUCH_DIST) { touchHand = h; break; }
-          }
-        }
-        if (touchHand) {
-          if (sm.rotateLastIndex && sm.rotateActive) {
-            const dx = touchHand.indexTipWorld.x - sm.rotateLastIndex.x;
-            const dy = touchHand.indexTipWorld.y - sm.rotateLastIndex.y;
-            cubeGroup.rotation.y += dx * ROTATE_SENSITIVITY;
-            cubeGroup.rotation.x += -dy * ROTATE_SENSITIVITY;
-          }
-          sm.rotateLastIndex = touchHand.indexTipWorld.clone();
-          sm.rotateActive = true;
-          sm.highlight = 1;
-        } else {
-          sm.rotateActive = false;
-          sm.rotateLastIndex = null;
         }
 
         // 👍 Thumbs up terdeteksi → cycle ke pola jaring-jaring berikutnya.
@@ -977,6 +1125,7 @@
           sm.spreadOpenFrames = 0;
           sm.targetUnfold = 0;
           sm.grabHandIdx = -1;
+          playAudio(buildingAudio);
           setState(STATES.SPAWNED, '🪧 Jaring-jaring kubus aktif. 👏 Tepuk untuk menghilangkan.');
         }
       }
@@ -1027,7 +1176,8 @@
         cubeGroup.position.copy(sm.smoothPos);
         cubeGroup.scale.setScalar(sm.scale);
         // Auto-rotate hanya saat masih bentuk kubus; freeze saat unfolded.
-        const spinFactor = 1 - sm.unfold;
+        // Auto-rotate freeze saat unfolded atau saat user rotate manual.
+        const spinFactor = (1 - sm.unfold) * (sm.rotateActive ? 0 : 1);
         cubeGroup.rotation.y += dt * 0.5 * spinFactor;
 
         fillMat.opacity = 0.18 * sm.fade;
@@ -1057,6 +1207,7 @@
       }
 
       renderer.render(scene, camera);
+      drawHandSkeleton();
     }
 
     // ---------------------------------------------------------------------
