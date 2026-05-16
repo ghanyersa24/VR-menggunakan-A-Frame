@@ -191,13 +191,19 @@
     renderer.setSize(window.innerWidth, window.innerHeight, false);
     renderer.setClearColor(0x000000, 0);
 
-    scene.add(new THREE.AmbientLight(0xffe5e5, 0.9));
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    // Lighting setup: ambient lebih kuat agar GLB texture tidak terlalu gelap,
+    // key light dari atas-depan, rim dari kiri-belakang untuk depth,
+    // fill dari bawah untuk detail bawah model.
+    scene.add(new THREE.AmbientLight(0xfff0f0, 1.4));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.0);
     keyLight.position.set(2, 3, 4);
     scene.add(keyLight);
-    const rimLight = new THREE.DirectionalLight(0xff6b9d, 0.5);
+    const rimLight = new THREE.DirectionalLight(0xff8fa3, 0.8);
     rimLight.position.set(-2, 1, -2);
     scene.add(rimLight);
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.5);
+    fillLight.position.set(0, -2, 2);
+    scene.add(fillLight);
 
     // ---------------------------------------------------------------------
     // [2b] AUDIO SYSTEM
@@ -493,7 +499,7 @@
     const loader = new GLTFLoader();
 
     function fitToUnitBox(obj) {
-      // Normalisasi ukuran model: bounding box → muat di ~0.8 unit.
+      // Normalisasi ukuran model: bounding box → muat di ~0.8 unit, di-center ke origin.
       const bbox = new THREE.Box3().setFromObject(obj);
       const size = new THREE.Vector3();
       const center = new THREE.Vector3();
@@ -501,10 +507,11 @@
       bbox.getCenter(center);
       const maxDim = Math.max(size.x, size.y, size.z);
       if (maxDim > 0) {
-        const targetSize = 0.8;
-        obj.scale.multiplyScalar(targetSize / maxDim);
+        const s = 0.8 / maxDim;
+        obj.scale.multiplyScalar(s);
+        // Geser ke origin setelah scale diterapkan
+        obj.position.sub(center.multiplyScalar(s));
       }
-      obj.position.sub(center.multiplyScalar(targetSize / Math.max(size.x, size.y, size.z, 1)));
     }
 
     // Hapus organ aktif dari container — dispose geometry & material.
@@ -523,11 +530,98 @@
       organReady = false;
     }
 
+    // Tag setiap mesh GLB berdasarkan glbMeshMap dari organ def.
+    // Untuk model satu-mesh (heart): buat invisible zone-mesh per anatomi
+    // supaya proximity picker bisa detect bagian. Zone mesh sangat kecil
+    // (sphere r=0.001, invisible) ditempatkan di posisi lokal yang sudah
+    // dikalibrasi, dan di-tag userData.partId seperti mesh procedural biasa.
+    // Buat zone-sphere untuk setiap zona anatomi GLB.
+    // Zone sphere normalnya TIDAK TERLIHAT (visible=false, depthWrite=false).
+    // Saat partId di-highlight, hanya zone milik partId itu yang di-set visible
+    // dengan warna semi-transparan — memberi feedback spasial yang tepat.
+    function _makeZoneSphere(partId, center, color, radius) {
+      const geo = new THREE.SphereGeometry(radius, 16, 12);
+      const mat = new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+        visible: false,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(...center);
+      mesh.userData.partId = partId;
+      mesh.userData.isZoneSphere = true;
+      return mesh;
+    }
+
+    // Upgrade material GLB ke MeshStandardMaterial supaya lighting scene aktif.
+    function _upgradeGlbMaterials(scene, roughness = 0.65, metalness = 0.05) {
+      scene.traverse((o) => {
+        if (!o.isMesh || o.userData.isZoneSphere) return;
+        const upgrade = (m) => {
+          if (!m || m.isMeshStandardMaterial) return m;
+          return new THREE.MeshStandardMaterial({
+            map: m.map || null,
+            normalMap: m.normalMap || null,
+            roughnessMap: m.roughnessMap || null,
+            metalnessMap: m.metalnessMap || null,
+            roughness,
+            metalness,
+          });
+        };
+        if (Array.isArray(o.material)) {
+          o.material = o.material.map(upgrade);
+        } else {
+          o.material = upgrade(o.material);
+        }
+      });
+    }
+
+    // Tag mesh GLB dengan zone-sphere berdasarkan glbMeshMap & glbZones dari def.
+    function tagGlbMeshes(scene, def) {
+      if (!def.glbMeshMap) return;
+
+      const isSingleMesh = Object.values(def.glbMeshMap).includes('glb_heart_single');
+
+      if (isSingleMesh && Array.isArray(def.glbZones)) {
+        // Jantung: 1 mesh — buat zone-sphere per bagian anatomi.
+        _upgradeGlbMaterials(scene, 0.65, 0.05);
+        for (const z of def.glbZones) {
+          const color = def.parts[z.partId]?.color ?? 0xffffff;
+          const sphere = _makeZoneSphere(z.partId, z.center, color, 0.09);
+          scene.add(sphere);
+        }
+        return;
+      }
+
+      // Paru-paru: 2 mesh terpisah — match nama, lalu buat zone-sphere per lobus.
+      _upgradeGlbMaterials(scene, 0.7, 0.03);
+      const addedZones = new Set();
+      scene.traverse((o) => {
+        if (!o.isMesh || o.userData.isZoneSphere) return;
+        const meshName = o.name || '';
+        let zoneKey = null;
+        for (const [pattern, key] of Object.entries(def.glbMeshMap)) {
+          if (meshName.toLowerCase().includes(pattern.toLowerCase())) {
+            zoneKey = key;
+            break;
+          }
+        }
+        if (!zoneKey || addedZones.has(zoneKey)) return;
+        addedZones.add(zoneKey);
+        const zones = def.glbZones?.[zoneKey];
+        if (!zones) return;
+        for (const z of zones) {
+          const color = def.parts[z.partId]?.color ?? 0xffffff;
+          const sphere = _makeZoneSphere(z.partId, z.center, color, 0.1);
+          scene.add(sphere);
+        }
+      });
+    }
+
     // Spawn organ ke organContainer. Coba GLB dulu kalau ada, kalau gagal
-    // pakai procedural builder dari organ module. Builder dipanggil dengan
-    // dependency injection { THREE, tagPart } supaya module tidak perlu
-    // import three.js langsung (three sudah di-import di file ini lewat
-    // importmap, dan tagPart hidup di scope HTML).
+    // pakai procedural builder dari organ module.
     function spawnOrgan(organKey) {
       clearActiveOrgan();
       const def = ORGANS[organKey];
@@ -545,15 +639,24 @@
         loader.load(
           def.glbPath,
           (gltf) => {
-            // Hanya pakai GLB kalau organ ini masih dipilih saat callback firing.
             if (state.activeOrgan !== organKey) return;
+            console.log(`[GLB] loaded: ${def.glbPath}`);
             activeOrganMesh = gltf.scene;
             fitToUnitBox(activeOrganMesh);
+            tagGlbMeshes(activeOrganMesh, def);
             organContainer.add(activeOrganMesh);
             organReady = true;
           },
-          undefined,
-          () => useProcedural()
+          (xhr) => {
+            if (xhr.total) {
+              console.log(`[GLB] loading ${def.glbPath}: ${Math.round(xhr.loaded / xhr.total * 100)}%`);
+            }
+          },
+          (err) => {
+            console.warn(`[GLB] gagal load ${def.glbPath}:`, err?.message || err);
+            console.warn('[GLB] fallback ke procedural model');
+            useProcedural();
+          }
         );
       } else {
         useProcedural();
@@ -944,6 +1047,21 @@
     }
 
     function setHighlight(partId) {
+      if (!activeOrganMesh) return;
+      const def = state.activeOrgan ? ORGANS[state.activeOrgan] : null;
+      const isGlb = !!(def?.glbMeshMap);
+
+      if (isGlb) {
+        // GLB: toggle visibility zone-sphere milik partId.
+        // Zone lain disembunyikan — highlight spasial tepat per zona.
+        activeOrganMesh.traverse((o) => {
+          if (!o.isMesh || !o.userData.isZoneSphere) return;
+          o.material.visible = (partId && o.userData.partId === partId);
+        });
+        return;
+      }
+
+      // Procedural: emissive per-mesh seperti sebelumnya.
       const meshes = getPickableMeshes();
       for (const m of meshes) {
         const isOn = m.userData.partId === partId;
