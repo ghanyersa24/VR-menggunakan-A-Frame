@@ -769,10 +769,13 @@
     // user-gesture unlock untuk media playback.
     const breakAudio = new Audio('assets/break.mp3');
     const buildingAudio = new Audio('assets/building.mp3');
+    const laserAudio = new Audio('assets/laser.mp3');
     breakAudio.preload = 'auto';
     buildingAudio.preload = 'auto';
+    laserAudio.preload = 'auto';
     breakAudio.volume = 0.9;
     buildingAudio.volume = 0.9;
+    laserAudio.volume = 0.9;
 
     // BGM futuristic — looped, volume rendah. Start ditunda hingga kubus
     // pertama spawn (clap atau charge-fist) agar terasa "menyala bersama
@@ -922,6 +925,7 @@
       st.targetUnfold = 0;
       cube.group.rotation.set(0, 0, 0);
       setState(cube, STATES.SPAWNED, hint || ' ✊ genggam dekat kubus untuk memindahkan');
+      playAudio(laserAudio);
       return cube;
     }
 

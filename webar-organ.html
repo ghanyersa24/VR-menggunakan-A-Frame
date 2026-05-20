@@ -429,6 +429,16 @@
       audio.lastSpokenPart = null;
     }
 
+    // True kalau narasi sedang dijadwalkan (delay 1 detik) atau sedang
+    // diucapkan. Dipakai picker untuk MENGUNCI zona aktif — user tidak bisa
+    // pindah ke zona lain sampai pembacaan deskripsi selesai.
+    function isNarrating() {
+      if (!audio.enabled || !audio.narrEnabled) return false;
+      if (audio.pendingNarrationTimer) return true;
+      if (window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending)) return true;
+      return false;
+    }
+
     // Browser butuh user gesture pertama untuk membolehkan audio.
     function userKickAudio() {
       if (audio.started) return;
@@ -1368,6 +1378,11 @@
       // part picker
       selectedPart: null,
       pickStableUntil: 0,
+      // dwell: kandidat zona yang sedang di-hover + waktu mulai hover.
+      // Zona baru jadi `selectedPart` hanya kalau hoverCandidate stabil
+      // selama PICK_DWELL_MS (lihat blok PART PICKER).
+      hoverCandidate: null,
+      hoverSince: 0,
       // highlight
       highlight: 0,
     };
@@ -1380,6 +1395,11 @@
     // sekedar mendekati area-nya.
     const PICK_RADIUS_BONUS = 0.05;
     const PICK_STICKY_MS = 350;      // hold label sebentar setelah telunjuk lepas
+    // Dwell time: telunjuk harus stabil menunjuk satu zona selama X ms sebelum
+    // zona itu di-"commit" (highlight + narasi mulai dijadwalkan). Mencegah
+    // false-pick saat tangan menyapu lewat banyak zona — terutama zona kecil
+    // atau yang di tengah-tengah model.
+    const PICK_DWELL_MS = 600;
     const SMOOTHING = 0.4;
     const SCALE_MIN = 0.3;
     const SCALE_MAX = 3.0;
@@ -1743,10 +1763,49 @@
             }
           }
           if (bestPart) {
-            pickedPart = bestPart;
-            state.pickStableUntil = now + PICK_STICKY_MS;
+            // Catat sebagai kandidat hover, BELUM jadi pickedPart. Pickedpart
+            // di-promote di blok dwell di bawah.
+            if (state.hoverCandidate !== bestPart) {
+              state.hoverCandidate = bestPart;
+              state.hoverSince = now;
+            }
+          } else {
+            state.hoverCandidate = null;
+            state.hoverSince = 0;
           }
+        } else {
+          state.hoverCandidate = null;
+          state.hoverSince = 0;
         }
+      } else {
+        // Gesture lain aktif (grab/pinch/rotate) → reset hover supaya saat
+        // user balik ke mode pointing, dwell timer dimulai dari awal.
+        state.hoverCandidate = null;
+        state.hoverSince = 0;
+      }
+
+      // ===== DWELL GATING =====
+      // Kunci zona selama narasi berjalan: kalau TTS sedang membaca deskripsi
+      // part aktif, abaikan kandidat baru. User harus menunggu pembacaan
+      // selesai sebelum bisa pindah ke zona lain.
+      const narrationLock = state.selectedPart && isNarrating();
+      const cand = state.hoverCandidate;
+      if (cand) {
+        if (cand === state.selectedPart) {
+          // Sudah di zona aktif → tetap sticky, tidak perlu dwell lagi.
+          pickedPart = cand;
+          state.pickStableUntil = now + PICK_STICKY_MS;
+        } else if (narrationLock) {
+          // Narasi masih jalan → tahan di zona aktif, abaikan kandidat.
+          pickedPart = state.selectedPart;
+          state.pickStableUntil = now + PICK_STICKY_MS;
+        } else if (now - state.hoverSince >= PICK_DWELL_MS) {
+          // Dwell tercapai → commit kandidat sebagai picked.
+          pickedPart = cand;
+          state.pickStableUntil = now + PICK_STICKY_MS;
+        }
+        // else: kandidat valid tapi dwell belum tercapai → pickedPart tetap
+        // null, sticky window akan menjaga selectedPart lama (kalau ada).
       }
 
       // Sticky behavior: kalau telunjuk sempat hilang sebentar, tetap tampil.
@@ -1765,8 +1824,10 @@
         mode = mode === 'IDLE' ? 'PICK' : (mode + '+PICK');
       } else if (state.selectedPart && now > state.pickStableUntil) {
         // Lepas seleksi setelah sticky window habis & tidak ada part baru.
-        // Tapi pertahankan label saat user grab/pinch (visual context).
-        if (!state.grabActive && !state.pinchActive) {
+        // Tapi pertahankan label saat user grab/pinch (visual context), DAN
+        // saat narasi masih berjalan — biar deskripsi tidak terputus kalau
+        // telunjuk sempat lepas dari zona aktif.
+        if (!state.grabActive && !state.pinchActive && !isNarrating()) {
           state.selectedPart = null;
           setHighlight(null);
           stopNarration();
@@ -1776,7 +1837,19 @@
       setMode(mode);
 
       // Hint dinamis
-      if (mode === 'IDLE') {
+      // Kandidat hover yang BELUM ter-commit (dwell belum tercapai dan beda
+      // dengan selectedPart) → tampilkan progress supaya user tahu harus
+      // menahan telunjuk sebentar.
+      const hoverPending = state.hoverCandidate
+        && state.hoverCandidate !== state.selectedPart
+        && !(state.selectedPart && isNarrating());
+      if (hoverPending) {
+        const elapsed = Math.min(PICK_DWELL_MS, now - state.hoverSince);
+        const pct = Math.round((elapsed / PICK_DWELL_MS) * 100);
+        const ph = getParts()[state.hoverCandidate];
+        const title = ph ? ph.title : 'bagian ini';
+        hintEl.textContent = `👉 Tahan pada ${title}… ${pct}%`;
+      } else if (mode === 'IDLE') {
         if (latestHands.length === 0) {
           hintEl.textContent = '✋ Tunjukkan tangan ke kamera untuk berinteraksi';
         } else {
